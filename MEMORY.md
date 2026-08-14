@@ -16,6 +16,13 @@ Entry format:
 
 ---
 
+## 2026-08-14 — Throwaway wallet imported; own OpenRouter key instead of `bag llm activate`
+
+**Why:** the scaffold had an empty keystore and empty env placeholders, so nothing downstream of `bag init` could run. (An earlier read of `.env.local` reported both vars as "set" — that was a `sed` artifact; they were empty.)
+**Approach:** generated a 32-char `WALLET_PASSWORD` into the gitignored `.studio/.env.local`, imported the user-supplied throwaway key over **stdin** (`--private-key -`; `bag` refuses inline keys), and set `OPENROUTER_API_KEY` directly rather than running `bag llm activate`. Also installed `bag` into `app/agent/.venv` so its deps match the agent's.
+**Rejected:** `bag env set` for the password — it deliberately refuses unlock passwords as argv. `bag llm activate` — that provisions a Pieverse gateway key; the user has their own OpenRouter key.
+**Revisit when:** this stops being a throwaway. The key was pasted in chat, so it must never hold real value — rotate to a fresh wallet before mainnet.
+
 ## 2026-08-14 — One instruction file for both Claude Code and Codex, via symlink
 
 **Why:** Codex reads `AGENTS.md`, Claude Code reads `CLAUDE.md`. Two files covering the same project drift within a week.

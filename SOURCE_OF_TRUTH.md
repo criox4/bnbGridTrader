@@ -32,7 +32,7 @@ Mirrored from `app/agent/studio.toml` and `agentcore/agentcore.json`. Re-read th
 | Project / runtime name | `bnbGridTrader` |
 | Framework · runtime · protocol | ADK · AgentCore · A2A |
 | Network | `bsc-testnet` |
-| Wallet | `evm-local` keystore, local signer — address not yet set (`bag wallet new`) |
+| Wallet | `evm-local` keystore, local signer — `0xFAf0ffd121947B9EE3920Fa0CfbF9EEEB0AcBF7f` (**throwaway**, imported key). Funded on bsc-testnet: ~0.30 BNB, 10 U |
 | LLM | OpenRouter, `openai/gpt-4o-mini` |
 | `$U` token | `0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565` |
 | List price | `100000000000000000` wei (0.1 U) |
@@ -51,9 +51,42 @@ Mirrored from `app/agent/studio.toml` and `agentcore/agentcore.json`. Re-read th
 5. Deploy with `bag deploy`, never raw `agentcore deploy`. `agentcore dev`/`validate`/`status` are fine.
 6. `[wallet.signing]` extra domains/types and `[payments.x402].allowed_hosts` are security boundaries — widen only on explicit request, and state the tradeoff.
 
+## Lifecycle checklist
+
+Order and command names taken from the `/bnbagent-studio` skill and from what the
+`BNB_LP_Range_Balancer` sibling project actually ran. Update the marks as they change.
+
+| | Step | State |
+| --- | --- | --- |
+| ✅ | `bag init` — scaffold `app/agent/`, `agentcore/`, venv | done |
+| ✅ | `WALLET_PASSWORD` in `.studio/.env.local` | generated, 32 chars |
+| ✅ | `bag wallet new --private-key -` — import throwaway key via stdin | `0xFAf0ff…BF7f` |
+| ✅ | `OPENROUTER_API_KEY` via `bag env set … --file .studio/.env.local` | set |
+| ✅ | `bag doctor` — scaffold gate | 4 WARNs, no FAILs |
+| ⬜ | Set `[payments.erc8183].max_price` — clamp ceiling | **unset**; sibling uses `1000000000000000000` (1 U, 10× list) |
+| ⬜ | Write the grid-trading strategy — no `[strategy]` block, no strategy code | not started |
+| ⬜ | `bag dev` — local A2A on `:9000`, exercise negotiate / notify_funded | never run |
+| ⬜ | `bag erc8004 register` — writes `[identity]` | not registered |
+| ⬜ | Ship — `bag deploy` (needs AWS creds) **or** Docker; see below | undecided |
+
+Notes on the last two:
+
+- **`bag deploy` is unproven on this stack.** `AGENTS.md` mandates it over raw
+  `agentcore deploy`, and that stands — but the sibling project's
+  `deployed-state.json` is `{"targets": {}}`: it shipped via Docker + nginx on a
+  VPS instead, with the keystore bind-mounted read-only rather than baked in.
+  Pick a path deliberately; AWS credentials are not configured here either way.
+- **`bag erc8004 update-endpoint` can stop finding the agent.** The sibling's
+  mainnet id `265375` aged out of the 8004scan indexer the CLI queries, so the
+  endpoint had to be updated by token id through the library. Register with the
+  final endpoint if you can.
+
 ## Environment
 
-- `agentcore` and `uv` are on PATH. **`bag` is not installed** — install bnbagent-studio before running any `bag` command.
-- Agent venv: `python -m venv app/agent/.venv && app/agent/.venv/bin/pip install -e ./app/agent`.
+- `agentcore`, `uv`, `docker` and `bag` (0.0.5) are on PATH; `bag` is also installed
+  into `app/agent/.venv` — prefer `app/agent/.venv/bin/bag` so deps match the agent.
+- AWS credentials are **not** configured — required before any `bag deploy`.
+- Agent venv: `uv pip install --python app/agent/.venv/bin/python -e ./app/agent`
+  (that venv has no `pip`; it is uv-managed).
 - The root `pyproject.toml` is a comment stub, not an installable package.
 - Git root is this directory. Commit messages are gated by `.githooks/commit-msg`; enable with `git config core.hooksPath .githooks`.
