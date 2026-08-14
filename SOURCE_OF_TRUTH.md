@@ -65,10 +65,10 @@ Order and command names taken from the `/bnbagent-studio` skill and from what th
 | ✅ | `bag llm test` — LLM reachable | `pong` via OpenRouter |
 | ✅ | `[payments.erc8183].max_price` — clamp ceiling | `1000000000000000000` (1 U, 10× list), matching the sibling |
 | ✅ | `bag doctor` — scaffold gate | 3 WARNs, no FAILs |
-| ⬜ | `[storage].kind = "ipfs"` + `STORAGE_API_URL` / `STORAGE_API_KEY` | **needs a pinning service** — see below |
+| ⏸ | `[storage].kind = "ipfs"` + `STORAGE_API_URL` / `STORAGE_API_KEY` | **deferred** — needs a pinning service; `local` is fine until a buyer fetches |
 | ⬜ | Write the grid-trading strategy — no `[strategy]` block, no strategy code | not started |
 | ⬜ | `bag dev` — local A2A on `:9000`, exercise negotiate / notify_funded | never run |
-| ⬜ | `bag erc8004 register` — writes `[identity]` | not registered |
+| ⏸ | `bag erc8004 register` — writes `[identity]` | **deferred** until a real endpoint exists (gas-sponsored on testnet via MegaFuel, so no cost pressure to rush) |
 | ⬜ | Ship — `bag deploy` (needs AWS creds) **or** Docker; see below | undecided |
 
 Notes:

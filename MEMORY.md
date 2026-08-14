@@ -16,6 +16,13 @@ Entry format:
 
 ---
 
+## 2026-08-14 — ERC-8004 registration and IPFS storage both deferred
+
+**Why:** "configure everything" ran out of things that could be set without a decision. Both remaining items commit to something external — an on-chain agentURI, and a paid pinning service.
+**Approach:** deferred both. `max_price` set to 1 U (10× list, sibling convention); signing policy left untouched (the SDK's decision tree confirms EIP-3009 on chains 56/97 is the zero-config path).
+**Rejected:** registering now with a `localhost` agentURI — that is precisely what the sibling project did and then had to repoint; its mainnet id later aged out of the 8004scan indexer the CLI queries, stranding `update-endpoint`. Also rejected setting `ERC8183_AGENT_URL`: the agent mounts no job-query endpoint, so it would publish a URL that 404s rather than fixing anything.
+**Revisit when:** there is a real serving endpoint (→ register), or a buyer needs to fetch a deliverable (→ ipfs, required even against `bag dev`).
+
 ## 2026-08-14 — Throwaway wallet imported; own OpenRouter key instead of `bag llm activate`
 
 **Why:** the scaffold had an empty keystore and empty env placeholders, so nothing downstream of `bag init` could run. (An earlier read of `.env.local` reported both vars as "set" — that was a `sed` artifact; they were empty.)
