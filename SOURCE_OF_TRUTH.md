@@ -62,14 +62,36 @@ Order and command names taken from the `/bnbagent-studio` skill and from what th
 | ✅ | `WALLET_PASSWORD` in `.studio/.env.local` | generated, 32 chars |
 | ✅ | `bag wallet new --private-key -` — import throwaway key via stdin | `0xFAf0ff…BF7f` |
 | ✅ | `OPENROUTER_API_KEY` via `bag env set … --file .studio/.env.local` | set |
-| ✅ | `bag doctor` — scaffold gate | 4 WARNs, no FAILs |
-| ⬜ | Set `[payments.erc8183].max_price` — clamp ceiling | **unset**; sibling uses `1000000000000000000` (1 U, 10× list) |
+| ✅ | `bag llm test` — LLM reachable | `pong` via OpenRouter |
+| ✅ | `[payments.erc8183].max_price` — clamp ceiling | `1000000000000000000` (1 U, 10× list), matching the sibling |
+| ✅ | `bag doctor` — scaffold gate | 3 WARNs, no FAILs |
+| ⬜ | `[storage].kind = "ipfs"` + `STORAGE_API_URL` / `STORAGE_API_KEY` | **needs a pinning service** — see below |
 | ⬜ | Write the grid-trading strategy — no `[strategy]` block, no strategy code | not started |
 | ⬜ | `bag dev` — local A2A on `:9000`, exercise negotiate / notify_funded | never run |
 | ⬜ | `bag erc8004 register` — writes `[identity]` | not registered |
 | ⬜ | Ship — `bag deploy` (needs AWS creds) **or** Docker; see below | undecided |
 
-Notes on the last two:
+Notes:
+
+- **`[storage].kind = "local"` cannot deliver to a buyer.** It writes a `file://`
+  deliverable to `~/.bag/deliverables/<project>/` and the agent mounts *no*
+  job-query endpoint, by design. `submit_result` then either fails (no
+  `ERC8183_AGENT_URL`) or publishes an unreachable URL on-chain — and this is true
+  even against `bag dev`, not just after deploy. `bag deploy prepare` raises it as
+  W10. `local` is correct only for offline dev where you read the file yourself.
+  Any real buyer flow needs `ipfs` plus a pinning service's `STORAGE_API_URL` /
+  `STORAGE_API_KEY`. **Deliberately not setting `ERC8183_AGENT_URL`** — with no
+  job-query endpoint it would only publish a URL that 404s.
+- **LLM runs through OpenRouter**, not Pieverse. `bag llm activate` is the Pieverse
+  path (writes `PIEVERSE_LLM_API_KEY` + `[llm.pieverse].key_hash`); it is not
+  required here, but note `bag deploy prepare` blocks on a missing `key_hash`
+  *if* you ever switch `[llm].provider` to pieverse.
+- **Use `app/agent/.venv/bin/bag`.** The global `bag` has no `litellm`, so
+  `bag llm test` fails against it with `No module named 'litellm'`.
+- **Signing policy needs no configuration.** EIP-3009 `ReceiveWithAuthorization` /
+  `TransferWithAuthorization` against default domains on chains 56/97 is the
+  zero-config path, and `bag wallet policy show` confirms both chains are already
+  allowlisted with `Permit*` denied. Per invariant 6, leave it alone.
 
 - **`bag deploy` is unproven on this stack.** `AGENTS.md` mandates it over raw
   `agentcore deploy`, and that stands — but the sibling project's
