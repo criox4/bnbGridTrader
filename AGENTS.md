@@ -259,3 +259,18 @@ every intent to the right playbook via its references.
    extra_domains / extra_primary_types and `[payments.x402].allowed_hosts`
    are security boundaries — change them only when the user explicitly asks,
    and state the tradeoff.
+
+## Working memory — read these before changing anything
+
+- **`SOURCE_OF_TRUTH.md`** — canonical facts (config locations, current network /
+  pricing / wallet state, environment gotchas). The config files outrank it; keep
+  its table in sync when you change one.
+- **`MEMORY.md`** — decision log. Read it before reversing an approach, and append
+  an entry (newest at top, format is in the file) for any call a future reader
+  would otherwise have to reverse-engineer from the diff.
+
+## Commits
+
+Conventional Commits, enforced by `.githooks/commit-msg`. Enable once per clone:
+`git config core.hooksPath .githooks`. Format: `<type>(<optional scope>): <description>`,
+types `feat fix docs style refactor perf test build ci chore revert`.
