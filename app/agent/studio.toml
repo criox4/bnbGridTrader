@@ -1,0 +1,50 @@
+[project]
+name = "bnbGridTrader-agent"
+
+[stack]
+# Project-lifetime facts: which framework / runtime adapter recipes this
+# Agent was scaffolded against. doctor / dev / deploy read these to know
+# what to check, load, and route. framework: adk; runtime: agentcore | azure-foundry.
+framework = "adk"
+runtime = "agentcore"
+# External protocol this runtime serves (one runtime, one signer):
+#   A2A — serve_a2a: agent card + negotiate/notify_funded skills.
+#   MCP — FastMCP on /mcp: negotiate (signed quote) + notify_funded (verify →
+#         deliver → submit, synchronously within the tool call) + read-only chain
+#         tools. MCP delivery runs in-call (≤ ~15 min); the runtime is stateful.
+protocol = "A2A"
+
+[network]
+default = "bsc-testnet"
+
+[wallet]
+# Local keystore signer. The Agent is the SOLE key-holder/signer.
+# The keystore lives at the WORKSPACE root — outside app/agent (the AgentCore
+# codeLocation) — so no packaging path can bundle it into a deploy artifact.
+kind = "evm-local"
+signer = "local"
+keystore_dir = "../../.studio/wallets"
+# address = "0x..."   # filled by `bag wallet new`
+
+[llm]
+provider = "openrouter"
+model = "openai/gpt-4o-mini"
+
+[payments.erc8183]
+# Read by the Agent: it quotes the FIXED `price`, CLAMPS it to [min,max],
+# freezes a short-TTL offer, and EIP-191 signs it — pricing is rule-based, the
+# LLM never prices.
+currency = "0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565"   # $U token address — prefilled from [network].default
+price = "100000000000000000"                   # wei — your list price (0.1 U); what every quote charges
+min_price = "0"                                # wei — clamp floor
+max_price = ""                                 # wei — clamp ceiling; SET before going live
+quote_ttl_seconds = 900                        # seconds a signed quote stays valid; SDK caps at 900 (~15min work window)
+default_estimated_completion_seconds = 600
+poll_interval_seconds = 30
+auto_settle = false                            # opt-in: detect dispute-window-elapsed → settle
+
+[storage]
+# Deliverables written to local disk (file://). Offline-dev only —
+# does NOT survive deploy. Path from STORAGE_LOCAL_PATH.
+kind = "local"
+

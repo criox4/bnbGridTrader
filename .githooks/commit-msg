@@ -1,0 +1,10 @@
+#!/bin/sh
+# Conventional Commits gate. Enable once per clone:  git config core.hooksPath .githooks
+grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._/-]+\))?!?: .{1,}' "$1" && exit 0
+grep -qE '^(Merge|Revert) ' "$1" && exit 0
+
+echo "Commit message must follow Conventional Commits:"
+echo "  <type>(<optional scope>): <description>"
+echo "  types: feat fix docs style refactor perf test build ci chore revert"
+echo "  e.g.  feat(agent): sign quotes with EIP-191"
+exit 1
