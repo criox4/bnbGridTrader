@@ -59,7 +59,19 @@ WBNB_ABI = [
 ]
 ERC20_WRITE_ABI = WBNB_ABI  # approve/allowance/balanceOf are the shared subset
 
-ROUTER_ABI = [
+# TWO router ABIs, because the two routers are not interchangeable.
+#
+# The marketplace spec (5.1) requires the PancakeSwap SMART ROUTER, which can
+# route across V3 + V2 + StableSwap. It is deployed on MAINNET ONLY: 0x13f4EA83
+# has code on both chains, but a selector probe shows only the mainnet one
+# exposes exactInputSingle. Testnet therefore falls back to the V3 SwapRouter.
+#
+# The difference is not cosmetic — the parameter tuples differ:
+#   V3 SwapRouter  0x414bf389  8 fields, INCLUDING deadline
+#   Smart Router   0x04e45aaf  7 fields, NO deadline (it lives in multicall)
+# Sending one shape to the other router reverts with an unhelpful error, so the
+# ABI is chosen from the address book, never assumed.
+V3_ROUTER_ABI = [
     {"name": "exactInputSingle", "type": "function", "stateMutability": "payable",
      "inputs": [{"type": "tuple", "name": "params", "components": [
          {"type": "address", "name": "tokenIn"}, {"type": "address", "name": "tokenOut"},
@@ -70,12 +82,38 @@ ROUTER_ABI = [
      "outputs": [{"type": "uint256", "name": "amountOut"}]},
 ]
 
+SMART_ROUTER_ABI = [
+    {"name": "exactInputSingle", "type": "function", "stateMutability": "payable",
+     "inputs": [{"type": "tuple", "name": "params", "components": [
+         {"type": "address", "name": "tokenIn"}, {"type": "address", "name": "tokenOut"},
+         {"type": "uint24", "name": "fee"}, {"type": "address", "name": "recipient"},
+         {"type": "uint256", "name": "amountIn"},
+         {"type": "uint256", "name": "amountOutMinimum"},
+         {"type": "uint160", "name": "sqrtPriceLimitX96"}]}],
+     "outputs": [{"type": "uint256", "name": "amountOut"}]},
+]
+ROUTER_ABI = V3_ROUTER_ABI  # back-compat alias
+
+
+def active_router(network: str) -> tuple[str, list, str]:
+    """(address, abi, kind) of the router this network trades through.
+
+    Smart Router where deployed (spec 5.1), V3 SwapRouter otherwise.
+    """
+    a = chain.addresses(network)
+    if a.get("smart_router"):
+        return a["smart_router"], SMART_ROUTER_ABI, "smart_router"
+    return a["swap_router"], V3_ROUTER_ABI, "v3_swap_router"
+
 
 # --- Guards ---------------------------------------------------------------------
 def allowed_addresses(network: str) -> set[str]:
     """Every address this agent may transact with, from the shared address book."""
     a = chain.addresses(network)
-    return {str(a[k]).lower() for k in ("quoter_v2", "swap_router", "wbnb", "usdt", "pool")}
+    allowed = {str(a[k]).lower() for k in ("quoter_v2", "swap_router", "wbnb", "usdt", "pool")}
+    if a.get("smart_router"):
+        allowed.add(str(a["smart_router"]).lower())
+    return allowed
 
 
 def _require_allowed(network: str, address: str) -> str:
@@ -269,16 +307,24 @@ def execute_swap(token_in: str, token_out: str, amount_in_wei: int,
     _require_impact(quote, max_impact_pct)
     floor = _min_out(int(quote["amount_out_wei"]), max_slippage_pct)
 
-    approve_exact(token_in, a["swap_router"], int(amount_in_wei), network)
-    router = _contract(network, a["swap_router"], ROUTER_ABI)
+    router_addr, router_abi, router_kind = active_router(network)
+    # Approve the router that will actually pull the tokens. Approving one and
+    # calling the other is a silent way to lose a transaction to an allowance
+    # error after the approve has already cost gas.
+    approve_exact(token_in, router_addr, int(amount_in_wei), network)
+    router = _contract(network, router_addr, router_abi)
     recipient = Web3.to_checksum_address(get_wallet().address)
-    result = _send(network, router.functions.exactInputSingle((
-        _require_allowed(network, token_in),
-        _require_allowed(network, token_out),
-        int(a["fee"]), recipient, _deadline(),
-        int(amount_in_wei), floor, 0,
-    )), gas=400_000)
+    tin = _require_allowed(network, token_in)
+    tout = _require_allowed(network, token_out)
+    if router_kind == "smart_router":
+        params = (tin, tout, int(a["fee"]), recipient, int(amount_in_wei), floor, 0)
+    else:
+        params = (tin, tout, int(a["fee"]), recipient, _deadline(),
+                  int(amount_in_wei), floor, 0)
+    result = _send(network, router.functions.exactInputSingle(params), gas=400_000)
     result.update({
+        "router": router_addr,
+        "router_kind": router_kind,
         "token_in": token_in,
         "token_out": token_out,
         "amount_in_wei": int(amount_in_wei),
@@ -288,3 +334,21 @@ def execute_swap(token_in: str, token_out: str, amount_in_wei: int,
         "effective_price_usdt_per_bnb": quote["effective_price_usdt_per_bnb"],
     })
     return result
+
+
+# --- Spec 5.5 names -------------------------------------------------------------
+# The marketplace spec names the two legs `execute_buy` / `execute_sell`. They
+# live HERE, in the write path, and are deliberately absent from tools.py: naming
+# a function the way a spec asks does not make it safe to hand to an LLM.
+def execute_buy(amount_quote_wei: int, network: str | None = None) -> dict[str, Any]:
+    """Buy base with quote (USDT -> WBNB). Fixed code; never an LLM tool."""
+    network = network or chain.default_network()
+    a = chain.addresses(network)
+    return execute_swap(a["usdt"], a["wbnb"], int(amount_quote_wei), network)
+
+
+def execute_sell(amount_base_wei: int, network: str | None = None) -> dict[str, Any]:
+    """Sell base for quote (WBNB -> USDT). Fixed code; never an LLM tool."""
+    network = network or chain.default_network()
+    a = chain.addresses(network)
+    return execute_swap(a["wbnb"], a["usdt"], int(amount_base_wei), network)

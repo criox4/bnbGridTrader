@@ -1,4 +1,4 @@
-# VPS deployment: the A2A grid-trader seller, one process.
+# VPS deployment: the two spec-2 layers as two processes from one image.
 #
 #   set -a && . .studio/.env.local && set +a && docker compose up -d --build
 #
@@ -6,6 +6,8 @@
 #   WALLET_PASSWORD     unlocks the keystore — the sole signer
 #   OPENROUTER_API_KEY
 #   PUBLIC_URL          where THIS host is reachable, e.g. https://x.nip.io
+#   SERVICE_API_KEY     gates /activate /pause /cancel /update /stop /resume;
+#                       unset => those endpoints 503 rather than run open
 #
 # MIGRATING AN EXISTING DEPLOYMENT: a fresh volume starts with EMPTY state,
 # which reads as a brand-new agent — no grid, no open lots, PnL reset to zero
@@ -19,12 +21,23 @@
 # Same for deliverables → /data/deliverables, or every already-paid job's
 # deliverable_url starts 404ing.
 
+x-common: &common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: bnb-grid-trader:latest
+  restart: unless-stopped
+  volumes:
+    # The keystore, read-only and outside the image on purpose — keys stay in
+    # a user-controlled environment. Must be readable by uid 10001 on the HOST.
+    - ./.studio/wallets:/secrets/wallets:ro
+    # State, deliverables and the audit log must outlive any container.
+    - grid-data:/data
+
 services:
+  # Agent Layer: A2A negotiate / notify_funded. Holds the key, signs.
   agent:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: bnb-grid-trader:latest
+    <<: *common
     container_name: bnb-grid-agent
     restart: unless-stopped
     environment:
@@ -46,13 +59,8 @@ services:
       # strategy.py excludes another process on the same filesystem but cannot
       # see one on another host. Set to 0 to serve quotes and plans without
       # trading.
-      GRID_MONITOR: ${GRID_MONITOR:-0}
-    volumes:
-      # The keystore, read-only and outside the image on purpose — keys stay in
-      # a user-controlled environment. Must be readable by uid 10001 on the HOST.
-      - ./.studio/wallets:/secrets/wallets:ro
-      # State, deliverables and the audit log must outlive any container.
-      - grid-data:/data
+      # The monitor runs in the SERVICE layer, not here. Exactly one, never both.
+      GRID_MONITOR: "0"
     ports:
       # Loopback ONLY. Docker publishes ports by writing its own iptables rules,
       # which are consulted BEFORE ufw's — so "9001:9000" on a host with a
@@ -63,6 +71,29 @@ services:
       test: ["CMD", "curl", "-fsS", "http://localhost:9000/ping"]
       interval: 30s
       timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  # Service Layer: public REST + marketplace data. Holds no key; runs the monitor.
+  service:
+    <<: *common
+    container_name: bnb-grid-service
+    command: python /app/app/service/main.py
+    working_dir: /app/app/service
+    environment:
+      BNB_NETWORK: ${BNB_NETWORK:-bsc-mainnet}
+      WALLET_PASSWORD: ${WALLET_PASSWORD:?set WALLET_PASSWORD on the host}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY on the host}
+      SERVICE_API_KEY: ${SERVICE_API_KEY:?set SERVICE_API_KEY on the host}
+      # This container owns the poll. An flock cannot span hosts, so if you ever
+      # run a second VPS, exactly one of them sets this.
+      SERVICE_RUN_MONITOR: ${GRID_MONITOR:-0}
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${SERVICE_HOST_PORT:-8081}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
       retries: 3
       start_period: 40s
 

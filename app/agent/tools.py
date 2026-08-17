@@ -103,6 +103,67 @@ def quote_trade(amount_usdt: float) -> dict:
     return _chain.quote_swap(a["usdt"], a["wbnb"], wei)
 
 
+# --- Spec 5.5 names (read-only half) -------------------------------------------
+# The marketplace spec names its tools differently from ours. These are thin
+# aliases so anything looking for the spec's vocabulary finds it, without a
+# second implementation to drift. The spec's `execute_buy` / `execute_sell` /
+# `record_trade` are NOT here: they move funds or mutate the ledger, and a name
+# from a spec does not make them safe for an LLM. They live in grid_signing.py
+# and strategy.py as fixed code.
+def get_balance() -> dict:
+    """This agent's BNB, WBNB and USDT balances (alias of get_balances)."""
+    return _chain.get_balances()
+
+
+def calculate_grid(capital_usdt: float | None = None) -> dict:
+    """Compute the grid levels and order sizing for the current price."""
+    return _strat.get_plan(capital_usdt)
+
+
+def get_grid_status() -> dict:
+    """The active grid: levels, which hold lots, and where price sits."""
+    return _strat.get_grid()
+
+
+def get_open_orders() -> list:
+    """Open positions, one per filled rung, each with its sell target."""
+    return _strat.get_open_orders()
+
+
+def calculate_order_size(capital_usdt: float | None = None) -> dict:
+    """USDT committed per buy rung, and how many rungs the capital covers."""
+    plan = _strat.get_plan(capital_usdt)
+    return {k: plan[k] for k in ("order_size_quote", "buy_levels", "capital_quote")}
+
+
+def should_buy() -> dict:
+    """Whether the strategy would BUY at the current price, and why."""
+    d = _strat.check()
+    return {"should_buy": d["action"] == "buy", "decision": d}
+
+
+def should_sell() -> dict:
+    """Whether the strategy would SELL at the current price, and why."""
+    d = _strat.check()
+    return {"should_sell": d["action"] == "sell", "decision": d}
+
+
+def calculate_pnl() -> dict:
+    """Realised and unrealised PnL. They are SEPARATE — never add them."""
+    return _strat.get_performance()
+
+
+def calculate_grid_profit() -> dict:
+    """Profit from CLOSED round trips only, with the win rate."""
+    p = _strat.get_performance()
+    return {k: p.get(k) for k in ("grid_profit", "completed_grids", "win_rate", "round_trips")}
+
+
+def get_marketplace_data() -> dict:
+    """The marketplace listing payload for this agent (spec 5.7 shape)."""
+    return _strat.get_marketplace_data()
+
+
 # Read-only grid + strategy tools. The WRITE path (approve / swap / wrap) lives in
 # grid_signing.py and the loop controls (activate / pause / seed / step) live in
 # strategy.py as operator-only CLI actions. NONE of them belong here: activate and
@@ -118,6 +179,17 @@ GRID_READ_TOOLS = [
     FunctionTool(check_decision),
     FunctionTool(get_plan),
     FunctionTool(quote_trade),
+    # Spec 5.5 vocabulary — read-only half only.
+    FunctionTool(get_balance),
+    FunctionTool(calculate_grid),
+    FunctionTool(get_grid_status),
+    FunctionTool(get_open_orders),
+    FunctionTool(calculate_order_size),
+    FunctionTool(should_buy),
+    FunctionTool(should_sell),
+    FunctionTool(calculate_pnl),
+    FunctionTool(calculate_grid_profit),
+    FunctionTool(get_marketplace_data),
 ]
 
 LLM_READ_TOOLS = [

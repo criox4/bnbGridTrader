@@ -30,8 +30,17 @@ from typing import Any
 MIN_EDGE_BPS = 5.0  # 0.05% of headroom over costs, on top of fees
 
 
-def build_grid(lower: float, upper: float, levels: int) -> list[float]:
-    """``levels`` geometrically-spaced prices from ``lower`` to ``upper`` inclusive.
+def build_grid(lower: float, upper: float, levels: int,
+               spacing: str = "geometric") -> list[float]:
+    """``levels`` prices from ``lower`` to ``upper`` inclusive.
+
+    ``spacing="geometric"`` (default) keeps a constant RATIO between rungs, so
+    every rung earns the same percentage. ``spacing="arithmetic"`` keeps a
+    constant DIFFERENCE, which is what the marketplace spec's example shows
+    (600, 620, 640 … 800) — offered because the spec asks for it, but note the
+    tradeoff: with arithmetic spacing the bottom rungs earn several times more
+    per fill than the top ones, which quietly makes low prices the only
+    profitable region.
 
     Raises ValueError on a degenerate grid rather than returning something
     plausible — a silently collapsed grid would trade against itself.
@@ -42,15 +51,26 @@ def build_grid(lower: float, upper: float, levels: int) -> list[float]:
         raise ValueError(f"prices must be positive, got lower={lower} upper={upper}")
     if upper <= lower:
         raise ValueError(f"upper ({upper}) must exceed lower ({lower})")
+    if spacing == "arithmetic":
+        step = (upper - lower) / (levels - 1)
+        return [lower + step * i for i in range(levels)]
+    if spacing != "geometric":
+        raise ValueError(f"spacing must be 'geometric' or 'arithmetic', got {spacing!r}")
     ratio = (upper / lower) ** (1.0 / (levels - 1))
     return [lower * (ratio ** i) for i in range(levels)]
 
 
 def step_ratio(grid: list[float]) -> float:
-    """The constant ratio between neighbouring levels."""
+    """The SMALLEST ratio between neighbouring levels.
+
+    Constant for a geometric grid. For an arithmetic one the ratio shrinks as
+    price rises, so the smallest (top) step is the one that decides whether the
+    grid is profitable everywhere — reporting grid[1]/grid[0] there would quote
+    the best rung and hide the losing ones.
+    """
     if len(grid) < 2:
         raise ValueError("grid must have at least 2 levels")
-    return grid[1] / grid[0]
+    return min(grid[i + 1] / grid[i] for i in range(len(grid) - 1))
 
 
 def gross_edge_pct(grid: list[float]) -> float:
@@ -181,7 +201,12 @@ def realised_pnl(trades: list[dict[str, Any]]) -> dict[str, float]:
     # that has only bought as a large loss.
     avg_cost = (spent / base_bought) if base_bought > 0 else 0.0
     cost_of_sold = avg_cost * base_sold
+    pairs = round_trips(trades)
+    wins = [r for r in pairs if r > 0]
     return {
+        "grid_profit": sum(pairs),
+        "win_rate": (len(wins) / len(pairs)) if pairs else 0.0,
+        "completed_grids": len(pairs),
         "realised_quote": earned - cost_of_sold,
         "quote_spent": spent,
         "quote_earned": earned,
@@ -192,6 +217,33 @@ def realised_pnl(trades: list[dict[str, Any]]) -> dict[str, float]:
             sum(1 for t in trades if t["side"] == "sell"),
         ),
     }
+
+
+def round_trips(trades: list[dict[str, Any]]) -> list[float]:
+    """Profit of each COMPLETED round trip, in quote currency, in close order.
+
+    Pairs each sell with the buy at the SAME grid level, which is what a round
+    trip is here — a lot bought at level i and sold at level i+1. Average-cost
+    accounting (``realised_pnl``) answers "what did the book make"; this answers
+    "did each individual grid close green", which is what ``win_rate`` and the
+    marketplace's ``grid_profit`` mean.
+
+    Trades without a ``level`` (older logs, or hand-written test data) are
+    skipped rather than guessed at.
+    """
+    open_lots: dict[int, float] = {}
+    closed: list[float] = []
+    for t in trades:
+        level = t.get("level")
+        if level is None:
+            continue
+        if t["side"] == "buy":
+            open_lots[int(level)] = float(t["quote_amount"])
+        elif t["side"] == "sell":
+            cost = open_lots.pop(int(level), None)
+            if cost is not None:
+                closed.append(float(t["quote_amount"]) - cost)
+    return closed
 
 
 def plan_for(

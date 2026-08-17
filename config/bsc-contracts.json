@@ -15,10 +15,12 @@
     "    'execution reverted: 0x'.",
     "Also note position_manager DIFFERS per network even though factory is",
     "IDENTICAL on both. Re-verify with `python test_blockchain.py --live`, which",
-    "checks every address on both chains."
+    "checks every address on both chains.",
+    "",
+    "smart_router: PancakeSwap Smart Router (routes V3 + V2 + StableSwap). Present on MAINNET ONLY. Verified by SELECTOR, not by presence: 0x13f4EA83 has code on both chains, but only the mainnet one exposes exactInputSingle's 7-field form (0x04e45aaf, no deadline). The testnet address is a different contract entirely \u2014 the same trap as quoter_v2. Agents fall back to swap_router (the V3 SwapRouter, 8-field 0x414bf389, WITH deadline) where smart_router is absent."
   ],
-  "verified_at": "2026-08-11",
-  "verified_by": "test_blockchain.py::_live_addressbook",
+  "verified_at": "2026-08-18",
+  "verified_by": "test_blockchain.py::_live_addressbook + selector probe",
   "networks": {
     "bsc-mainnet": {
       "chain_id": 56,
@@ -41,10 +43,11 @@
             {
               "fee": 100,
               "address": "0x172fcD41E0913e95784454622d1c3724f546f849",
-              "note": "~2x deeper but earns a fifth the fee rate — pick deliberately"
+              "note": "~2x deeper but earns a fifth the fee rate \u2014 pick deliberately"
             }
           ]
-        }
+        },
+        "smart_router": "0x13f4EA83D0bd40E75C8222255bc855a974568Dd4"
       }
     },
     "bsc-testnet": {

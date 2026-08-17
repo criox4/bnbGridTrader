@@ -85,6 +85,10 @@ def _addresses(network: str, fee: int, pair: str = "BNB/USDT") -> dict[str, Any]
         "chain_id": int(net["chain_id"]),
         "quoter_v2": dex["quoter_v2"],
         "swap_router": dex["swap_router"],
+        # Present on mainnet only — see the address book's _readme. None means
+        # "fall back to the V3 SwapRouter", which is a different ABI, not just a
+        # different address.
+        "smart_router": dex.get("smart_router"),
         "wbnb": net["tokens"]["wbnb"],
         "usdt": net["tokens"]["usdt"],
         "pool": match["address"],
@@ -141,11 +145,28 @@ def strategy_config(network: str | None = None) -> dict[str, Any]:
             return float(value[network])
         return float(value)
 
+    # `grid_count` is the marketplace spec's name and counts INTERVALS, not
+    # rungs: its example has grid_count 10 and lists 11 prices (600..800 by 20).
+    # Off by one in that direction means every grid is one rung short.
+    if "grid_count" in raw:
+        levels = int(raw["grid_count"]) + 1
+    else:
+        levels = int(raw.get("levels", 9))
+
     cfg = {
         "pair": str(raw.get("pair", "BNB/USDT")),
         "fee": int(raw.get("fee", 500)),
-        "levels": int(raw.get("levels", 9)),
+        "levels": levels,
+        "grid_count": levels - 1,
+        "spacing": str(raw.get("spacing", "geometric")),
         "range_pct": float(raw.get("range_pct", 10.0)),
+        # Absolute bounds (spec shape). When both are set they WIN over
+        # range_pct: an operator who names 600/800 means those prices, not a
+        # band around whatever the price happens to be at activation.
+        "lower_price": float(raw.get("lower_price") or 0.0),
+        "upper_price": float(raw.get("upper_price") or 0.0),
+        # Loss ceiling per UTC day, in quote currency. 0 disables it.
+        "max_daily_loss": _per_network("max_daily_loss", 0.0),
         "order_size_usdt": _per_network("order_size_usdt", 1.0),
         "max_capital_usdt": _per_network("max_capital_usdt", 10.0),
         "max_slippage_pct": _per_network("max_slippage_pct", 1.0),
@@ -153,8 +174,26 @@ def strategy_config(network: str | None = None) -> dict[str, Any]:
         "min_gas_reserve_bnb": _per_network("min_gas_reserve_bnb", 0.02),
         "poll_interval_seconds": int(raw.get("poll_interval_seconds", 60)),
     }
+    # `investment` is the spec's name for total deployed capital.
+    if "investment" in raw:
+        cfg["max_capital_usdt"] = _per_network("investment", cfg["max_capital_usdt"])
+    cfg["investment"] = cfg["max_capital_usdt"]
     cfg["network"] = network
     return cfg
+
+
+def grid_bounds(price: float, network: str | None = None) -> tuple[float, float]:
+    """The grid's (lower, upper) for a given spot price.
+
+    Absolute ``lower_price``/``upper_price`` win when both are set; otherwise the
+    band is +/-``range_pct`` around ``price``.
+    """
+    cfg = strategy_config(network)
+    lo, hi = cfg["lower_price"], cfg["upper_price"]
+    if lo > 0 and hi > 0:
+        return lo, hi
+    r = cfg["range_pct"] / 100.0
+    return price * (1 - r), price * (1 + r)
 
 
 def fee_bps(network: str | None = None) -> float:
@@ -210,11 +249,25 @@ def check_config_consistency(network: str | None = None, *,
 
     cfg = strategy_config(network)
 
+    if cfg["spacing"] not in ("geometric", "arithmetic"):
+        problems.append(
+            f"[strategy].spacing is {cfg['spacing']!r} — must be 'geometric' or 'arithmetic'"
+        )
+    lo, hi = cfg["lower_price"], cfg["upper_price"]
+    if (lo > 0) != (hi > 0):
+        problems.append(
+            "[strategy] lower_price and upper_price must be set together "
+            f"(got lower={lo}, upper={hi}) — one alone is silently ignored"
+        )
+    elif lo > 0 and hi <= lo:
+        problems.append(f"[strategy].upper_price ({hi}) must exceed lower_price ({lo})")
+
     import grid as _grid
 
     try:
         r = cfg["range_pct"] / 100.0
-        probe = _grid.build_grid(100.0 * (1 - r), 100.0 * (1 + r), cfg["levels"])
+        probe = _grid.build_grid(100.0 * (1 - r), 100.0 * (1 + r), cfg["levels"],
+                                 spacing=cfg["spacing"])
         # Only rungs at or BELOW centre are ever bought, so a full sweep costs
         # order_size x buy_rungs — not x levels. Counting all levels overstates
         # the requirement by ~2x and rejects a capital ceiling that is exactly

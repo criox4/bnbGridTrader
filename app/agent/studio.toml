@@ -55,8 +55,22 @@ auto_settle = false                            # opt-in: detect dispute-window-e
 pair = "BNB/USDT"
 fee = 500                    # pool fee tier, hundredths of a bip (500 = 0.05%)
 
-levels = 9                   # rungs spanning the range, geometrically spaced
+levels = 9                   # rungs spanning the range (grid_count = levels - 1)
 range_pct = 10.0             # grid half-width: +/-10% around the activation price
+spacing = "geometric"        # "geometric" (equal % per rung) | "arithmetic" (equal $)
+
+# Absolute bounds, the marketplace spec's shape. Set BOTH to pin the grid to
+# fixed prices instead of a band around whatever price is at activation; leave
+# them at 0 to use range_pct. Half-set is rejected by the config check rather
+# than silently ignored.
+# lower_price = 600.0
+# upper_price = 800.0
+
+# Daily loss breaker, in USDT, per UTC day, measured from CLOSED round trips
+# only — unrealised marks would let an ordinary dip trip it while nothing has
+# actually been lost. 0 disables. Sized here at ~1 losing round trip on mainnet
+# and effectively off on testnet, where the amounts are dust.
+max_daily_loss = { bsc-mainnet = 1.0, bsc-testnet = 0.0 }
 # PER-NETWORK, because trade sizing does not port between chains. Both pools
 # measured live with the quoter on 2026-08-18 — these are readings, not guesses:
 #

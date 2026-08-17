@@ -150,6 +150,54 @@ def test_full_cycle_never_rebuys_or_oversells():
     assert all(v >= 0 for v in filled.values()), filled
 
 
+def test_arithmetic_spacing_matches_the_spec_example():
+    # The marketplace spec shows 600..800 with grid_count 10 -> 11 levels of 20.
+    g = grid.build_grid(600.0, 800.0, 11, spacing="arithmetic")
+    assert g == [600.0 + 20 * i for i in range(11)], g
+    diffs = [g[i + 1] - g[i] for i in range(len(g) - 1)]
+    assert max(diffs) - min(diffs) < 1e-9
+
+
+def test_arithmetic_step_ratio_reports_the_worst_rung():
+    g = grid.build_grid(600.0, 800.0, 11, spacing="arithmetic")
+    # Bottom rung gains 20/600 = 3.33%, top rung 20/780 = 2.56%. The honest
+    # figure is the SMALLEST, or a validate_grid check passes on the best rung
+    # while the top ones lose money.
+    assert abs(grid.gross_edge_pct(g) - (800.0 / 780.0 - 1) * 100) < 1e-9
+
+
+def test_bad_spacing_name_raises():
+    try:
+        grid.build_grid(100.0, 200.0, 5, spacing="linear")
+    except ValueError:
+        return
+    raise AssertionError("unknown spacing should raise")
+
+
+def test_round_trips_pair_by_level():
+    trades = [
+        {"side": "buy",  "level": 1, "quote_amount": 10.0, "base_amount": 1.0},
+        {"side": "buy",  "level": 2, "quote_amount": 10.0, "base_amount": 1.0},
+        {"side": "sell", "level": 1, "quote_amount": 11.0, "base_amount": 1.0},   # +1 win
+        {"side": "sell", "level": 2, "quote_amount": 9.5,  "base_amount": 1.0},   # -0.5 loss
+    ]
+    rts = grid.round_trips(trades)
+    assert len(rts) == 2 and abs(rts[0] - 1.0) < 1e-9 and abs(rts[1] + 0.5) < 1e-9, rts
+    r = grid.realised_pnl(trades)
+    assert r["completed_grids"] == 2
+    assert abs(r["win_rate"] - 0.5) < 1e-9, r["win_rate"]
+    assert abs(r["grid_profit"] - 0.5) < 1e-9, r["grid_profit"]
+
+
+def test_round_trips_ignores_unclosed_and_unlabelled():
+    trades = [
+        {"side": "buy", "level": 1, "quote_amount": 10.0, "base_amount": 1.0},  # still open
+        {"side": "buy", "quote_amount": 10.0, "base_amount": 1.0},              # no level
+    ]
+    assert grid.round_trips(trades) == []
+    assert grid.realised_pnl(trades)["win_rate"] == 0.0
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

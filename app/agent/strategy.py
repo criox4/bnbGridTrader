@@ -12,6 +12,12 @@ starts moving funds. Activation is an explicit operator action:
     python strategy.py seed 0.02     # swap 0.02 BNB into USDT to fund buys
     python strategy.py step          # run exactly one decision, then stop
     python strategy.py reset         # clear grid + trade log (keeps inventory)
+    python strategy.py cancel        # SELL every open lot, then clear the grid
+    python strategy.py update L U N  # re-shape the grid in place, keeping lots
+    python strategy.py stop "why"    # emergency stop (latches; activate refuses)
+    python strategy.py resume        # release the emergency stop
+    python strategy.py marketplace   # the spec 5.7 marketplace payload
+    python strategy.py orders        # open positions, one per filled rung
 
 ``activate`` / ``pause`` / ``seed`` / ``step`` are NOT exposed as LLM tools — see
 ``tools.py``. They move funds or control the thing that moves funds, so they stay
@@ -63,6 +69,12 @@ _EMPTY: dict[str, Any] = {
     "activated_at": None,
     "updated_at": None,
     "last_error": None,
+    "gas_spent_wei": 0,
+    "last_trade": None,
+    # Set by emergency_stop(). Distinct from "paused": pause is routine, this is
+    # a latch that `activate` REFUSES to clear — it must be released explicitly,
+    # so whatever tripped it gets looked at by a human first.
+    "emergency_stopped": False,
 }
 
 
@@ -138,10 +150,16 @@ def activate(network: str | None = None) -> dict[str, Any]:
     if problems:
         raise RuntimeError("refusing to activate with config problems: " + "; ".join(problems))
 
+    if load_state(network).get("emergency_stopped"):
+        raise RuntimeError(
+            "emergency stop is engaged — refusing to activate. Investigate what "
+            "tripped it, then `python strategy.py resume` to release."
+        )
+
     cfg = chain.strategy_config(network)
     price = chain.get_price(network)["price_usdt_per_bnb"]
-    r = cfg["range_pct"] / 100.0
-    levels = grid.build_grid(price * (1 - r), price * (1 + r), cfg["levels"])
+    lower, upper = chain.grid_bounds(price, network)
+    levels = grid.build_grid(lower, upper, cfg["levels"], spacing=cfg["spacing"])
     warnings = grid.validate_grid(levels, chain.fee_bps(network), cfg["max_slippage_pct"])
     if warnings:
         raise RuntimeError("refusing to activate: " + "; ".join(warnings))
@@ -175,6 +193,155 @@ def reset(network: str | None = None) -> dict[str, Any]:
     """
     save_state(dict(_EMPTY), network)
     return get_status(network)
+
+
+def emergency_stop(reason: str = "manual", network: str | None = None) -> dict[str, Any]:
+    """Halt trading AND latch, so it cannot be restarted without a human.
+
+    Distinct from ``pause`` on purpose: pause is routine and ``activate`` clears
+    it, but an emergency stop means something was wrong enough that silently
+    resuming is the wrong default. ``activate`` refuses while this is set;
+    ``resume`` is the only release.
+    """
+    _update(network, status="paused", emergency_stopped=True,
+            last_error=f"{_now()} EMERGENCY STOP: {reason}")
+    log.error("EMERGENCY STOP on %s: %s", network or chain.default_network(), reason)
+    return get_status(network)
+
+
+def resume(network: str | None = None) -> dict[str, Any]:
+    """Release an emergency stop. Does NOT restart trading — activate does that."""
+    _update(network, emergency_stopped=False, last_error=None)
+    log.info("emergency stop released on %s (still paused)", network or chain.default_network())
+    return get_status(network)
+
+
+def daily_loss(network: str | None = None) -> float:
+    """Realised LOSS so far today (UTC), in quote currency. 0.0 when up.
+
+    Measured from closed round trips only. Counting unrealised marks here would
+    let an ordinary dip trip the breaker while nothing has actually been lost.
+    """
+    state = load_state(network)
+    today = datetime.now(timezone.utc).date().isoformat()
+    todays = [t for t in state["trades"] if str(t.get("ts", ""))[:10] == today]
+    # Pair against the FULL history: a lot bought yesterday and sold today closes
+    # today, and its loss belongs to today.
+    closed_today = []
+    open_lots: dict[int, float] = {}
+    for tr in state["trades"]:
+        lvl = tr.get("level")
+        if lvl is None:
+            continue
+        if tr["side"] == "buy":
+            open_lots[int(lvl)] = float(tr["quote_amount"])
+        elif tr["side"] == "sell":
+            cost = open_lots.pop(int(lvl), None)
+            if cost is not None and tr in todays:
+                closed_today.append(float(tr["quote_amount"]) - cost)
+    net = sum(closed_today)
+    return -net if net < 0 else 0.0
+
+
+def cancel_grid(network: str | None = None) -> dict[str, Any]:
+    """Close every open lot back to quote currency, then clear the grid.
+
+    The spec's ``cancelGrid``. Unlike ``reset`` — which only forgets — this SELLS,
+    so the wallet ends holding quote rather than a half-built position nobody is
+    managing. Each sale goes through the same guarded write path, so an
+    individual leg can be refused (impact, gas) without abandoning the rest; what
+    could not be sold is reported and left in the ledger.
+    """
+    import grid_signing as gs
+
+    network = network or chain.default_network()
+    a = chain.addresses(network)
+    state = load_state(network)
+    sold, failed = [], []
+
+    with _trade_lock(network):
+        state = load_state(network)
+        for level, amount in sorted(_filled_map(state).items()):
+            try:
+                res = gs.execute_swap(a["wbnb"], a["usdt"], int(amount), network)
+                quote_out = res["quoted_out_wei"] / 10 ** chain.decimals(network, a["usdt"])
+                state["filled"][str(level)] = 0
+                state["gas_spent_wei"] = int(state.get("gas_spent_wei", 0)) + int(res["gas_cost_wei"])
+                state["last_trade"] = _now()
+                state["trades"].append({
+                    "ts": _now(), "side": "sell", "level": level,
+                    "quote_amount": quote_out, "base_amount": amount / 1e18,
+                    "price": res["effective_price_usdt_per_bnb"], "tx": res["tx_hash"],
+                    "price_impact_pct": res["price_impact_pct"], "reason": "cancel_grid",
+                })
+                sold.append({"level": level, "tx": res["tx_hash"]})
+                save_state(state, network)
+            except Exception as e:  # noqa: BLE001 — one bad leg must not strand the others
+                log.error("cancel_grid: level %s could not be sold: %s", level, e)
+                failed.append({"level": level, "error": str(e)})
+
+        state["status"] = "paused"
+        if not failed:
+            state["grid"] = []
+            state["center_index"] = 0
+            state["center_price"] = 0.0
+        save_state(state, network)
+
+    return {"cancelled": not failed, "sold": sold, "failed": failed,
+            "note": "grid retained because some lots could not be sold" if failed
+                    else "grid cleared; wallet holds quote currency"}
+
+
+def update_grid(lower: float | None = None, upper: float | None = None,
+                levels: int | None = None, network: str | None = None) -> dict[str, Any]:
+    """Re-shape the grid in place, keeping inventory. The spec's ``updateGrid``.
+
+    Open lots are re-indexed onto the NEW levels by the price they were bought
+    at, so a lot keeps its sell target's meaning rather than inheriting whatever
+    level happens to share its old index. A lot that falls outside the new range
+    is kept at the nearest rung and reported — dropping it would strand tokens
+    the ledger no longer tracks.
+    """
+    network = network or chain.default_network()
+    cfg = chain.strategy_config(network)
+    state = load_state(network)
+    if not state["grid"]:
+        raise RuntimeError("no grid to update — run activate first")
+
+    old = [float(x) for x in state["grid"]]
+    price = chain.get_price(network)["price_usdt_per_bnb"]
+    d_lower, d_upper = chain.grid_bounds(price, network)
+    new = grid.build_grid(
+        float(lower) if lower else (old[0] or d_lower),
+        float(upper) if upper else (old[-1] or d_upper),
+        int(levels) if levels else cfg["levels"],
+        spacing=cfg["spacing"],
+    )
+    warnings = grid.validate_grid(new, chain.fee_bps(network), cfg["max_slippage_pct"])
+    if warnings:
+        raise RuntimeError("refusing to update: " + "; ".join(warnings))
+
+    remapped, moved = {}, []
+    for old_idx, amount in _filled_map(state).items():
+        bought_at = old[old_idx]
+        new_idx = max(0, grid.level_for_price(new, bought_at))
+        # Two old lots can land on one new rung; keep them separate by nudging up.
+        while str(new_idx) in remapped and new_idx + 1 < len(new):
+            new_idx += 1
+        remapped[str(new_idx)] = amount
+        if new[new_idx] != bought_at:
+            moved.append({"from_price": bought_at, "to_level": new_idx,
+                          "to_price": new[new_idx]})
+
+    state.update({
+        "grid": new,
+        "filled": remapped,
+        "center_index": grid.level_for_price(new, price),
+        "center_price": price,
+    })
+    save_state(state, network)
+    return {"updated": True, "levels": len(new), "lower": new[0], "upper": new[-1],
+            "relocated_lots": moved, "status": get_status(network)}
 
 
 def seed(bnb_amount: float, network: str | None = None) -> dict[str, Any]:
@@ -225,12 +392,24 @@ def step(network: str | None = None, *, force: bool = False) -> dict[str, Any]:
 
     network = network or chain.default_network()
     state = load_state(network)
+    # The emergency latch is checked even under `force`: force is for stepping a
+    # paused grid by hand, not for overriding a stop someone engaged.
+    if state.get("emergency_stopped"):
+        return {"action": "hold", "reason": "emergency stop engaged — `resume` to release"}
     if state["status"] != "active" and not force:
         return {"action": "hold", "reason": f"strategy is {state['status']}"}
     if not state["grid"]:
         return {"action": "hold", "reason": "no grid — activate first"}
 
     cfg = chain.strategy_config(network)
+    # Daily loss breaker. Checked BEFORE the decision so a losing day stops
+    # trading outright rather than after one more trade.
+    if cfg["max_daily_loss"] > 0:
+        lost = daily_loss(network)
+        if lost >= cfg["max_daily_loss"]:
+            return {"action": "hold",
+                    "reason": f"daily loss {lost:.6f} USDT has reached the "
+                              f"{cfg['max_daily_loss']:.6f} limit — no more trades today"}
     a = chain.addresses(network)
     decision = check(network)
     if decision["action"] == "hold":
@@ -261,6 +440,8 @@ def step(network: str | None = None, *, force: bool = False) -> dict[str, Any]:
                 res = gs.execute_swap(a["usdt"], a["wbnb"], amount_wei, network)
                 base_out = res["quoted_out_wei"]
                 state.setdefault("filled", {})[str(level)] = base_out
+                state["gas_spent_wei"] = int(state.get("gas_spent_wei", 0)) + int(res["gas_cost_wei"])
+                state["last_trade"] = _now()
                 state["trades"].append({
                     "ts": _now(), "side": "buy", "level": level,
                     "quote_amount": cfg["order_size_usdt"],
@@ -273,6 +454,8 @@ def step(network: str | None = None, *, force: bool = False) -> dict[str, Any]:
                 res = gs.execute_swap(a["wbnb"], a["usdt"], amount_wei, network)
                 quote_out = res["quoted_out_wei"] / 10 ** chain.decimals(network, a["usdt"])
                 state.setdefault("filled", {})[str(level)] = 0
+                state["gas_spent_wei"] = int(state.get("gas_spent_wei", 0)) + int(res["gas_cost_wei"])
+                state["last_trade"] = _now()
                 state["trades"].append({
                     "ts": _now(), "side": "sell", "level": level,
                     "quote_amount": quote_out,
@@ -350,6 +533,74 @@ def get_performance(network: str | None = None) -> dict[str, Any]:
         )
     except Exception as e:  # noqa: BLE001
         out["unrealised_quote"] = f"unavailable ({type(e).__name__}) — do not estimate it"
+    return out
+
+
+def get_marketplace_data(network: str | None = None) -> dict[str, Any]:
+    """The marketplace payload, in the spec's field names and shape (spec 5.7).
+
+    Deliberately mirrors the spec key-for-key rather than exposing our internal
+    names — a marketplace reading `completed_grids` must not have to know we call
+    them round trips. Two figures that are easy to conflate are kept apart:
+    ``grid_profit`` is realised from CLOSED round trips, ``total_pnl`` adds the
+    mark-to-market on lots still open.
+    """
+    network = network or chain.default_network()
+    state = load_state(network)
+    cfg = chain.strategy_config(network)
+    perf = get_performance(network)
+    levels = [float(x) for x in state["grid"]]
+
+    unreal = perf.get("unrealised_quote")
+    grid_profit = float(perf.get("grid_profit") or 0.0)
+    total_pnl = grid_profit + (unreal if isinstance(unreal, (int, float)) else 0.0)
+    gas_wei = int(state.get("gas_spent_wei", 0))
+    try:
+        gas_spent = gas_wei / 1e18 * chain.get_price(network)["price_usdt_per_bnb"]
+    except Exception:  # noqa: BLE001 — a status payload must not fail on RPC
+        gas_spent = None
+
+    return {
+        "agent": "BNB Grid Trader",
+        "category": "grid-trading",
+        "protocol": "PancakeSwap",
+        "pair": cfg["pair"],
+        "network": network,
+        "status": "stopped" if state.get("emergency_stopped") else state["status"],
+        "investment": cfg["investment"],
+        "lower": levels[0] if levels else None,
+        "upper": levels[-1] if levels else None,
+        "grid_count": (len(levels) - 1) if levels else cfg["grid_count"],
+        "grid_spacing": grid.gross_edge_pct(levels) if len(levels) > 1 else None,
+        "completed_grids": int(perf.get("completed_grids") or 0),
+        "grid_profit": round(grid_profit, 8),
+        "total_pnl": round(total_pnl, 8),
+        "win_rate": round(float(perf.get("win_rate") or 0.0), 4),
+        "last_trade": state.get("last_trade"),
+        "gas_spent": round(gas_spent, 8) if gas_spent is not None else None,
+    }
+
+
+def get_open_orders(network: str | None = None) -> list[dict[str, Any]]:
+    """Open positions, one per filled rung (spec 5.5 ``get_open_orders``).
+
+    This agent trades SPOT swaps, so there are no resting limit orders on any
+    book. What it has instead is a lot at a rung with a known sell target, which
+    is the same information a grid UI wants — labelled honestly rather than
+    pretending to be an order book.
+    """
+    network = network or chain.default_network()
+    state = load_state(network)
+    levels = [float(x) for x in state["grid"]]
+    out = []
+    for idx, amount in sorted(_filled_map(state).items()):
+        out.append({
+            "level": idx,
+            "bought_at": levels[idx] if idx < len(levels) else None,
+            "sell_target": levels[idx + 1] if idx + 1 < len(levels) else None,
+            "amount_base": amount / 1e18,
+            "kind": "open_position",  # not a resting order — see docstring
+        })
     return out
 
 
@@ -515,6 +766,22 @@ if __name__ == "__main__":
             print(json.dumps(get_grid(), indent=2, default=str))
         elif action == "plan":
             print(json.dumps(get_plan(), indent=2, default=str))
+        elif action == "cancel":
+            print(json.dumps(cancel_grid(), indent=2, default=str))
+        elif action == "update":
+            lo = float(sys.argv[2]) if len(sys.argv) > 2 else None
+            hi = float(sys.argv[3]) if len(sys.argv) > 3 else None
+            lv = int(sys.argv[4]) if len(sys.argv) > 4 else None
+            print(json.dumps(update_grid(lo, hi, lv), indent=2, default=str))
+        elif action == "stop":
+            reason = " ".join(sys.argv[2:]) or "manual"
+            print(json.dumps(emergency_stop(reason), indent=2, default=str))
+        elif action == "resume":
+            print(json.dumps(resume(), indent=2, default=str))
+        elif action == "marketplace":
+            print(json.dumps(get_marketplace_data(), indent=2, default=str))
+        elif action == "orders":
+            print(json.dumps(get_open_orders(), indent=2, default=str))
         elif action == "performance":
             print(json.dumps(get_performance(), indent=2, default=str))
         elif action == "status":

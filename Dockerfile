@@ -1,5 +1,8 @@
-# The grid trader: ONE process — the A2A seller (:9000), which also runs the
-# grid monitor thread when GRID_MONITOR=1.
+# One image, two entrypoints — the Agent Layer (A2A seller, :9000) and the
+# Service Layer (REST, :8080). Separate PROCESSES by design (spec section 2),
+# but not separate builds: app/service imports strategy.py / chain.py straight
+# out of app/agent, so their dependency sets are identical and two Dockerfiles
+# would only be two ways to drift. compose runs this image twice.
 #
 # Build context is bnbGridTrader/ (the git root), not app/agent/, because
 # chain.py locates config/bsc-contracts.json by walking parent directories. The
@@ -64,7 +67,8 @@ RUN useradd --create-home --uid 10001 agent \
     && chown -R agent:agent /data
 USER agent
 
-EXPOSE 9000
+# 9000 = A2A seller (Agent Layer), 8080 = REST (Service Layer).
+EXPOSE 9000 8080
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["python", "/app/app/agent/main.py"]
