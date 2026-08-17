@@ -39,6 +39,7 @@ Mirrored from `app/agent/studio.toml` and `agentcore/agentcore.json`. Re-read th
 | Price clamp | floor `0`, ceiling `1000000000000000000` (1 U) |
 | Quote TTL | 900 s (SDK cap) |
 | Auto-settle | off |
+| ERC-8004 id | mainnet `269233` ("BNB Grid Trader (test)"), testnet `1838` — per-network, both on the same address |
 | Storage | `local` (file://), served back by `main.py`'s `/erc8183/job/{id}/response`. Dies with the host — IPFS is still the durable answer |
 | Build | CodeZip, entrypoint `main.py`, codeLocation `app/agent/`, PYTHON_3_14 |
 
@@ -69,7 +70,7 @@ Order and command names taken from the `/bnbagent-studio` skill and from what th
 | ✅ | Grid-trading strategy — `[strategy]` block + `chain.py` / `grid.py` / `grid_signing.py` / `strategy.py` | built; live on testnet |
 | ✅ | Activate on testnet — seeded USDT, grid armed, first buy executed | 1 open lot at level 4 |
 | ✅ | `bag dev` — local A2A, `negotiate` verified (signature recovers to our wallet) | done; funded path still untested |
-| ⬜ | `bag erc8004 register` — writes `[identity]` | **now unblocked** — a real endpoint exists. Register AFTER rotating: it binds the address permanently |
+| ✅ | `bag erc8004 register` — writes `[identity]` | mainnet `269233` "BNB Grid Trader (test)", testnet `1838`. Both point at the nip.io card |
 | ✅ | Ship — Docker + nginx on `zd-instance`, mainnet | live at `bnb-grid.172-104-171-139.nip.io`, not trading |
 | ⬜ | Rotate the wallet before funding mainnet | **do this first** — key was pasted in chat |
 | ⬜ | Fund mainnet + `GRID_MONITOR=1` | wallet has 0.0023 BNB, 0 USDT |

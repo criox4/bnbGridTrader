@@ -89,3 +89,22 @@ poll_interval_seconds = 60
 # does NOT survive deploy. Path from STORAGE_LOCAL_PATH.
 kind = "local"
 
+[identity]
+# Written by `bag erc8004 register`. `agent_id` below is the MAINNET one; the
+# id is PER-NETWORK and this file records only one, so the other lives here:
+#
+#   bsc-mainnet  269233   name "BNB Grid Trader (test)"
+#   bsc-testnet    1838   name "BNB Grid Trader"
+#
+# The agentURI is MUTABLE — setAgentURI replaces the whole document, so name,
+# description and endpoint are all fixable in place on the same id. But
+# `bag erc8004 update-endpoint` finds the agent via the 8004scan indexer, which
+# only scans the newest ~1000 agents: the sibling project's mainnet id aged out
+# and the CLI then reported "no registered agent" for a token that reads fine
+# on-chain. If that happens, update by token id through the library instead.
+#
+# Both point at a nip.io host, which is deliberate for a test deployment — see
+# MEMORY.md. Moving to a real domain means a setAgentURI on BOTH ids.
+endpoint = "https://bnb-grid.172-104-171-139.nip.io/.well-known/agent-card.json"
+registered_at = "2026-08-17T20:10:45.004844+00:00"
+agent_id = 269233
