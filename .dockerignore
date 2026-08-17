@@ -1,0 +1,18 @@
+# The keystore and env secrets must NEVER enter the image. They are mounted at
+# runtime instead (compose mounts .studio/wallets read-only at /secrets/wallets).
+.studio/
+agentcore/.env.local
+**/.env.local
+
+# Runtime state belongs on the volume, not baked into a layer.
+.grid_state.*.json
+.grid_state.*.lock
+.grid_state.*.tmp
+
+# Build noise
+.git/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+agentcore/cdk/node_modules/
+app/agent/wheels/

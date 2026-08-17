@@ -15,7 +15,7 @@ runtime = "agentcore"
 protocol = "A2A"
 
 [network]
-default = "bsc-testnet"
+default = "bsc-mainnet"
 
 [wallet]
 # Local keystore signer. The Agent is the SOLE key-holder/signer.
@@ -35,7 +35,12 @@ model = "openai/gpt-4o-mini"
 # Read by the Agent: it quotes the FIXED `price`, CLAMPS it to [min,max],
 # freezes a short-TTL offer, and EIP-191 signs it — pricing is rule-based, the
 # LLM never prices.
-currency = "0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565"   # $U token address — prefilled from [network].default
+currency = "0xcE24439F2D9C6a2289F741120FE202248B666666"   # $U token on bsc-MAINNET (chain 56).
+# MUST match [network].default. Switching networks does NOT update this line,
+# and a stale value makes the agent sign quotes for one chain denominated in a
+# token that only exists on the other — a signed, worthless quote.
+# Testnet value: 0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565 (chain 97).
+# chain.check_config_consistency() compares the two at boot rather than trusting it.
 price = "100000000000000000"                   # wei — your list price (0.1 U); what every quote charges
 min_price = "0"                                # wei — clamp floor
 max_price = "1000000000000000000"                                 # wei — clamp ceiling; SET before going live
@@ -52,21 +57,29 @@ fee = 500                    # pool fee tier, hundredths of a bip (500 = 0.05%)
 
 levels = 9                   # rungs spanning the range, geometrically spaced
 range_pct = 10.0             # grid half-width: +/-10% around the activation price
-# Sized against MEASURED depth of the bsc-testnet BNB/USDT fee-500 pool, not
-# guessed. Live quoter readings, 2026-08-18:
-#   0.01 USDT -> 0.13% impact      0.5 USDT ->  7.80% impact
-#   0.05 USDT -> 0.47% impact      1.0 USDT -> 22.85% impact
-# At 1.0 USDT the impact guard blocks every trade and the grid never moves.
-# Re-measure before raising this, and re-measure again on mainnet (far deeper).
-order_size_usdt = 0.05       # USDT spent per buy rung
-max_capital_usdt = 0.5       # hard ceiling on total USDT deployed into the grid
+# PER-NETWORK, because trade sizing does not port between chains. Both pools
+# measured live with the quoter on 2026-08-18 — these are readings, not guesses:
+#
+#   bsc-testnet (shallow, unarbitraged)   bsc-mainnet (deep)
+#     0.01 USDT ->  0.13% impact             1 USDT -> 0.0477% impact
+#     0.05 USDT ->  0.47% impact           100 USDT -> 0.0480% impact
+#     0.50 USDT ->  7.80% impact          1000 USDT -> 0.0511% impact
+#     1.00 USDT -> 22.85% impact          5000 USDT -> 0.0645% impact
+#
+# On testnet 1.0 USDT would trip the impact guard and the grid would never move.
+# On mainnet depth is a non-issue and CAPITAL is the constraint instead. A single
+# scalar here would carry one chain's sizes onto the other the first time anyone
+# exported $BNB_NETWORK; chain.py refuses to run without an entry for the active
+# network. Re-measure before raising either.
+order_size_usdt  = { bsc-mainnet = 5.0,  bsc-testnet = 0.05 }
+max_capital_usdt = { bsc-mainnet = 50.0, bsc-testnet = 0.5 }
 
-# Execution guards. max_slippage_pct bounds the fill against the QUOTE;
-# max_price_impact_pct bounds the quote itself against spot — on the shallow
-# testnet pool the second one is what actually protects you (1 BNB moves that
-# pool ~44%), so keep order sizes small enough to stay under it.
-max_slippage_pct = 1.0
-max_price_impact_pct = 2.0
+# Execution guards, also per-network. max_slippage_pct bounds the fill against
+# the QUOTE; max_price_impact_pct bounds the quote itself against spot. On the
+# shallow testnet pool the second is what actually protects you; on mainnet both
+# can be tight because the pool barely moves.
+max_slippage_pct     = { bsc-mainnet = 0.5, bsc-testnet = 1.0 }
+max_price_impact_pct = { bsc-mainnet = 0.5, bsc-testnet = 2.0 }
 min_gas_reserve_bnb = 0.02   # never spend the wallet below this; gas must survive
 
 poll_interval_seconds = 60

@@ -121,17 +121,37 @@ def strategy_config(network: str | None = None) -> dict[str, Any]:
     """``[strategy]`` from studio.toml, with defaults and per-network resolution."""
     raw = dict(_studio_toml().get("strategy") or {})
     network = network or default_network()
+
+    def _per_network(key: str, default: float) -> float:
+        """Read a key that may be a scalar OR a per-network inline table.
+
+        Trade sizing is NOT portable between chains: measured live, 1 USDT moves
+        the testnet pool 22.8% but 5000 USDT moves mainnet 0.065% — a 100x+
+        difference in what is safe. A single scalar means exporting
+        ``$BNB_NETWORK`` silently carries one chain's sizes onto the other, so
+        these keys accept ``{ bsc-mainnet = X, bsc-testnet = Y }``.
+        """
+        value = raw.get(key, default)
+        if isinstance(value, dict):
+            if network not in value:
+                raise ValueError(
+                    f"[strategy].{key} has no entry for {network!r} "
+                    f"(has: {sorted(value)}) — refusing to guess a trade size"
+                )
+            return float(value[network])
+        return float(value)
+
     cfg = {
         "pair": str(raw.get("pair", "BNB/USDT")),
         "fee": int(raw.get("fee", 500)),
         "levels": int(raw.get("levels", 9)),
         "range_pct": float(raw.get("range_pct", 10.0)),
-        "order_size_usdt": float(raw.get("order_size_usdt", 1.0)),
-        "max_slippage_pct": float(raw.get("max_slippage_pct", 1.0)),
-        "max_price_impact_pct": float(raw.get("max_price_impact_pct", 2.0)),
+        "order_size_usdt": _per_network("order_size_usdt", 1.0),
+        "max_capital_usdt": _per_network("max_capital_usdt", 10.0),
+        "max_slippage_pct": _per_network("max_slippage_pct", 1.0),
+        "max_price_impact_pct": _per_network("max_price_impact_pct", 2.0),
         "min_gas_reserve_bnb": float(raw.get("min_gas_reserve_bnb", 0.02)),
         "poll_interval_seconds": int(raw.get("poll_interval_seconds", 60)),
-        "max_capital_usdt": float(raw.get("max_capital_usdt", 10.0)),
     }
     cfg["network"] = network
     return cfg

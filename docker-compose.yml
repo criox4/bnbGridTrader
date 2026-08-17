@@ -1,0 +1,64 @@
+# VPS deployment: the A2A grid-trader seller, one process.
+#
+#   set -a && . .studio/.env.local && set +a && docker compose up -d --build
+#
+# Required on the host (never in this file, never in the image):
+#   WALLET_PASSWORD     unlocks the keystore — the sole signer
+#   OPENROUTER_API_KEY
+#   PUBLIC_URL          where THIS host is reachable, e.g. https://x.nip.io
+#
+# MIGRATING AN EXISTING DEPLOYMENT: a fresh volume starts with EMPTY state,
+# which reads as a brand-new agent — no grid, no open lots, PnL reset to zero
+# while the wallet's tokens are unchanged. Worse than cosmetic: the level->lot
+# mapping lives only in that file, so the grid forgets which rungs it already
+# owns and re-buys them. Copy state across before first start:
+#
+#   docker cp app/agent/.grid_state.<network>.json bnb-grid-agent:/data/state/
+#   docker exec -u root bnb-grid-agent chown 10001:10001 /data/state/.grid_state.<network>.json
+#
+# Same for deliverables → /data/deliverables, or every already-paid job's
+# deliverable_url starts 404ing.
+
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bnb-grid-trader:latest
+    container_name: bnb-grid-agent
+    restart: unless-stopped
+    environment:
+      BNB_NETWORK: ${BNB_NETWORK:-bsc-mainnet}
+      WALLET_PASSWORD: ${WALLET_PASSWORD:?set WALLET_PASSWORD on the host}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY on the host}
+      # Must be the PUBLIC URL: submit publishes {this}/job/{id}/response
+      # on-chain and a buyer on another machine has to fetch it. main.py serves
+      # that route out of STORAGE_LOCAL_PATH. Pointing this at localhost
+      # publishes an address no buyer can reach.
+      ERC8183_AGENT_URL: ${PUBLIC_URL:?set PUBLIC_URL}/erc8183
+      # The autonomous grid loop. EXACTLY ONE process may run it: the flock in
+      # strategy.py excludes another process on the same filesystem but cannot
+      # see one on another host. Set to 0 to serve quotes and plans without
+      # trading.
+      GRID_MONITOR: ${GRID_MONITOR:-0}
+    volumes:
+      # The keystore, read-only and outside the image on purpose — keys stay in
+      # a user-controlled environment. Must be readable by uid 10001 on the HOST.
+      - ./.studio/wallets:/secrets/wallets:ro
+      # State, deliverables and the audit log must outlive any container.
+      - grid-data:/data
+    ports:
+      # Loopback ONLY. Docker publishes ports by writing its own iptables rules,
+      # which are consulted BEFORE ufw's — so "9001:9000" on a host with a
+      # deny-by-default firewall is still world-reachable, and `ufw status`
+      # cheerfully reports the port as blocked. nginx is the single way in.
+      - "${BIND_ADDR:-127.0.0.1}:${HOST_PORT:-9001}:9000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  grid-data:

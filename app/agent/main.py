@@ -261,6 +261,54 @@ def _ping_status():
 # request bodies. This is a tiny pure-ASGI wrapper (no SDK edit) that rewrites the
 # response body only for JSON-RPC error payloads; every other response passes
 # through untouched.
+def _serve_deliverables(app):
+    """Serve ``GET /erc8183/job/{id}/response`` from local deliverable storage.
+
+    Without this the ``local`` storage path sells work a buyer can pay for and
+    never fetch. ``submit_result`` writes the deliverable to
+    ``$STORAGE_LOCAL_PATH/job-{id}.json`` and publishes
+    ``{ERC8183_AGENT_URL}/job/{id}/response`` ON-CHAIN — but the A2A app mounts
+    no such route, so that URL 404s. Verified against the sibling deployment:
+    its published deliverable URLs 404 on both of its ports, so this gap is real
+    and not something the reference solved.
+
+    Read-only, GET-only, and the job id is coerced to an int before it reaches
+    the filesystem — a path segment from an untrusted URL must never become part
+    of a filename. IPFS storage remains the better answer (durable, and it
+    survives losing this host); this makes the local path honest in the meantime.
+    """
+    import json as _json
+    import re as _re
+    from pathlib import Path as _Path
+
+    pattern = _re.compile(r"^/erc8183/job/(\d+)/response/?$")
+
+    async def _wrapped(scope, receive, send):
+        if scope["type"] != "http" or scope.get("method") != "GET":
+            await app(scope, receive, send)
+            return
+        match = pattern.match(scope.get("path", ""))
+        if not match:
+            await app(scope, receive, send)
+            return
+
+        job_id = int(match.group(1))  # int() is the path-traversal guard
+        base = _Path(os.environ.get("STORAGE_LOCAL_PATH") or ".agent-data")
+        path = base / f"job-{job_id}.json"
+        try:
+            body = path.read_bytes()
+            status = 200
+        except OSError:
+            body = _json.dumps({"error": f"no deliverable stored for job {job_id}"}).encode()
+            status = 404
+        await send({"type": "http.response.start", "status": status,
+                    "headers": [(b"content-type", b"application/json"),
+                                (b"cache-control", b"public, max-age=300")]})
+        await send({"type": "http.response.body", "body": body, "more_body": False})
+
+    return _wrapped
+
+
 def _strip_error_input(app):
     async def _wrapped(scope, receive, send):
         if scope["type"] != "http":
@@ -363,6 +411,8 @@ if __name__ == "__main__":
     # serving.
     app = build_a2a_app(executor, agent_card, ping_handler=_ping_status)
     app = _strip_error_input(app)
+    # Outermost: deliverable fetches never touch the JSON-RPC error rewriter.
+    app = _serve_deliverables(app)
 
     uvicorn.run(
         app,
