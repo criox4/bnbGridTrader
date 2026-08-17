@@ -68,9 +68,12 @@ Order and command names taken from the `/bnbagent-studio` skill and from what th
 | ⏸ | `[storage].kind = "ipfs"` + `STORAGE_API_URL` / `STORAGE_API_KEY` | **deferred** — needs a pinning service; `local` is fine until a buyer fetches |
 | ✅ | Grid-trading strategy — `[strategy]` block + `chain.py` / `grid.py` / `grid_signing.py` / `strategy.py` | built; live on testnet |
 | ✅ | Activate on testnet — seeded USDT, grid armed, first buy executed | 1 open lot at level 4 |
-| ⬜ | `bag dev` — local A2A on `:9000`, exercise negotiate / notify_funded | never run |
-| ⏸ | `bag erc8004 register` — writes `[identity]` | **deferred** until a real endpoint exists (gas-sponsored on testnet via MegaFuel, so no cost pressure to rush) |
-| ⬜ | Ship — `bag deploy` (needs AWS creds) **or** Docker; see below | undecided |
+| ✅ | `bag dev` — local A2A, `negotiate` verified (signature recovers to our wallet) | done; funded path still untested |
+| ⬜ | `bag erc8004 register` — writes `[identity]` | **now unblocked** — a real endpoint exists. Register AFTER rotating: it binds the address permanently |
+| ✅ | Ship — Docker + nginx on `zd-instance`, mainnet | live at `bnb-grid.172-104-171-139.nip.io`, not trading |
+| ⬜ | Rotate the wallet before funding mainnet | **do this first** — key was pasted in chat |
+| ⬜ | Fund mainnet + `GRID_MONITOR=1` | wallet has 0.0023 BNB, 0 USDT |
+| ⬜ | Full funded job loop — createJob → fund → notify → deliver → settle | never run on either chain |
 
 Notes:
 
