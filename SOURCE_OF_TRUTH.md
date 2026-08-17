@@ -72,7 +72,7 @@ Order and command names taken from the `/bnbagent-studio` skill and from what th
 | ✅ | `bag dev` — local A2A, `negotiate` verified (signature recovers to our wallet) | done; funded path still untested |
 | ✅ | `bag erc8004 register` — writes `[identity]` | mainnet `269233` "BNB Grid Trader (test)", testnet `1838`. Both point at the nip.io card |
 | ✅ | Ship — Docker + nginx on `zd-instance`, mainnet | live at `bnb-grid.172-104-171-139.nip.io`, not trading |
-| ⬜ | Rotate the wallet before funding mainnet | **do this first** — key was pasted in chat |
+| ⏸ | Rotate the wallet | **deferred to the real-domain deploy** — this is a test agent on nip.io, mainnet id is named "(test)". Rotate together with the setAgentURI on both ids |
 | ⬜ | Fund mainnet + `GRID_MONITOR=1` | wallet has 0.0023 BNB, 0 USDT |
 | ⬜ | Full funded job loop — createJob → fund → notify → deliver → settle | never run on either chain |
 
