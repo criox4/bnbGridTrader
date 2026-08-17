@@ -16,6 +16,13 @@ Entry format:
 
 ---
 
+## 2026-08-18 — Closed the marketplace-spec gaps without weakening the LLM boundary
+
+**Why:** a cross-check against the marketplace spec found eight gaps — no Service Layer, no marketplace payload, missing `max_daily_loss` / `emergency_stop` / `cancelGrid` / `updateGrid`, spec tool names absent, and the wrong router.
+**Approach:** added them all. `app/service/` is the Service Layer (reads public, writes behind `SERVICE_API_KEY`, and an UNSET key 503s rather than running open). Spec tool names exist as thin aliases over the single implementation. `emergency_stop` LATCHES — `activate` refuses until `resume` — because a stop that auto-clears is just a pause.
+**Rejected:** exposing the spec's `execute_buy` / `execute_sell` / `record_trade` as LLM tools. The spec lists them alongside the read tools, but a name from a spec does not make a fund-moving function safe to hand to a model; they live in the write path instead. Also rejected making `get_open_orders` pretend to be an order book — this agent trades spot swaps, so it reports open POSITIONS and says so.
+**Revisit when:** the spec adds a limit-order venue, which would make real open orders meaningful.
+
 ## 2026-08-18 — Smart Router is mainnet-only; verified by selector, not by presence
 
 **Why:** spec §5.1 mandates the PancakeSwap Smart Router. `0x13f4EA83` has code on BOTH chains, so a presence check would have said "deployed, use it everywhere" — and the testnet bytecode is a third the size, i.e. a different contract. That is the same trap the address book documents for `quoter_v2`.
