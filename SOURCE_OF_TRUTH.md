@@ -78,7 +78,7 @@ Order and command names taken from the `/bnbagent-studio` skill and from what th
 | ✅ | Ship — Docker + nginx on `zd-instance`, mainnet | live at `bnb-grid.172-104-171-139.nip.io`, not trading |
 | ⏸ | Rotate the wallet | **deferred to the real-domain deploy** — this is a test agent on nip.io, mainnet id is named "(test)". Rotate together with the setAgentURI on both ids |
 | ⬜ | Fund mainnet + `GRID_MONITOR=1` | wallet has 0.0023 BNB, 0 USDT |
-| ⬜ | Full funded job loop — createJob → fund → notify → deliver → settle | never run on either chain |
+| 🚫 | Full funded job loop — createJob → fund → notify → deliver → settle | **blocked on testnet, not by us.** The stack owner de-whitelisted the testnet OptimisticPolicy: `EvaluatorRouter.policyWhitelist(0x4f4678d4…)` is False on testnet, True on mainnet, so `register_job` reverts `PolicyNotWhitelisted()` and every route around it is closed by the kernel (`HookRequired()` / `PolicyNotSet()`). Mainnet works but needs ≥0.1 U (wallet has 0.0224) and has a **7-day** dispute window. See MEMORY.md |
 
 Notes:
 

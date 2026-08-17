@@ -16,6 +16,19 @@ Entry format:
 
 ---
 
+## 2026-08-18 — The funded job loop is BLOCKED on testnet by an external de-whitelist
+
+**Why:** attempted the full `createJob → fund → notify → deliver → settle` loop on testnet (free, 10 $U held). `bag erc8183 buy` reverted at register with `0xc94463e3` = `PolicyNotWhitelisted()`.
+**Approach:** decoded the selector against the shipped ABIs rather than guessing, then read the router directly. `EvaluatorRouter.policyWhitelist(0x4f4678d4…)` is **False on testnet and True on mainnet** — same SDK, same pinned addresses. Jobs 7 and 9 carry that exact policy, so it worked once and was switched off by the stack's owner. Not our bug and not fixable from here.
+**Rejected:** three routes around it, each closed by the chain itself — (1) `hook = 0x0` → `HookRequired()`; (2) `hook = router, evaluator = us` (unrouted job, completed via `commerce.complete()` instead of `router.settle()`, which the SDK explicitly tolerates — it warns `CLIENT_AS_EVALUATOR` but returns `valid: True`) → `PolicyNotSet()` at fund, because the router-as-hook refuses to act on a job with no registered policy; (3) finding a replacement whitelisted policy → every public testnet RPC prunes logs past ~49k blocks, so the whitelist history cannot be read without an archive provider.
+**Revisit when:** the studio re-whitelists a testnet policy (re-check `policyWhitelist` before assuming), or the loop runs on mainnet instead — see the constraints below.
+
+**Two facts that decide the mainnet alternative:** the wallet holds **0.0224 U against a 0.1 U list price**, so it cannot pay itself; and mainnet's OptimisticPolicy `dispute_window` is **7 days** (testnet's is 1), so settlement cannot complete same-day even once funded.
+
+**Testnet gas is unsponsored in practice.** The preset sets `use_paymaster = True` (MegaFuel), and a sponsored write was silently DROPPED — broadcast returned a hash, then the tx appeared in neither mempool nor block and the nonce never advanced. Self-paying works: `dataclasses.replace(resolve_network(net), use_paymaster=False)` makes `_build_paymaster` return None. Suspect the paymaster first when a testnet write vanishes without a revert.
+
+**Left behind:** testnet jobs 528/529/530 sit OPEN with no escrow (530 has a budget set but was never funded — balance is still 10.0 U). They expire on their own; rejecting them would hit the same `PolicyNotSet()` hook.
+
 ## 2026-08-18 — `get_open_orders` reports both sides, not just the fills
 
 **Why:** the earlier entry justified reporting positions instead of resting orders, and that half was right — but it shipped only the SELL side. An armed grid with no fills yet returned `[]`, which reads as "nothing happening" when in fact four buy rungs are committed. Live testnet check: 4 real pending buys were invisible.
