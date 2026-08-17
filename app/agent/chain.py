@@ -150,7 +150,7 @@ def strategy_config(network: str | None = None) -> dict[str, Any]:
         "max_capital_usdt": _per_network("max_capital_usdt", 10.0),
         "max_slippage_pct": _per_network("max_slippage_pct", 1.0),
         "max_price_impact_pct": _per_network("max_price_impact_pct", 2.0),
-        "min_gas_reserve_bnb": float(raw.get("min_gas_reserve_bnb", 0.02)),
+        "min_gas_reserve_bnb": _per_network("min_gas_reserve_bnb", 0.02),
         "poll_interval_seconds": int(raw.get("poll_interval_seconds", 60)),
     }
     cfg["network"] = network
@@ -168,12 +168,19 @@ def fee_bps(network: str | None = None) -> float:
     return float(addresses(network)["fee"]) / 100.0
 
 
-def check_config_consistency(network: str | None = None) -> list[str]:
+def check_config_consistency(network: str | None = None, *,
+                             scope: str = "all") -> list[str]:
     """Cross-field config errors that per-field validation cannot see.
 
     These are the ones that surface only as a bad trade: an $U currency from the
     other chain, a fee tier with no pool, a grid too tight to cover its own
     costs. Returned rather than raised so a typo cannot take the A2A surface down.
+
+    ``scope="trading"`` drops the checks that only affect SELLING. The $U
+    currency is a payments fact: a mismatch makes quotes worthless but has no
+    bearing on whether the grid can trade. Without this split, pointing the
+    config at mainnet made ``strategy.activate`` refuse to run on testnet — a
+    selling misconfiguration blocking an unrelated trading action.
     """
     problems: list[str] = []
     network = network or default_network()
@@ -194,7 +201,7 @@ def check_config_consistency(network: str | None = None) -> list[str]:
         "bsc-testnet": "0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565",
     }
     expected = known.get(network)
-    if expected and currency and currency.lower() != expected.lower():
+    if scope != "trading" and expected and currency and currency.lower() != expected.lower():
         problems.append(
             f"[payments.erc8183].currency {currency} is not the $U token for "
             f"{network} ({expected}) — quotes would be denominated in a token "
@@ -202,18 +209,24 @@ def check_config_consistency(network: str | None = None) -> list[str]:
         )
 
     cfg = strategy_config(network)
-    if cfg["order_size_usdt"] * cfg["levels"] > cfg["max_capital_usdt"]:
-        problems.append(
-            f"a full grid sweep needs {cfg['order_size_usdt'] * cfg['levels']:.4f} USDT "
-            f"but [strategy].max_capital_usdt is {cfg['max_capital_usdt']:.4f} — the "
-            f"lowest rungs would never fill"
-        )
 
     import grid as _grid
 
     try:
         r = cfg["range_pct"] / 100.0
         probe = _grid.build_grid(100.0 * (1 - r), 100.0 * (1 + r), cfg["levels"])
+        # Only rungs at or BELOW centre are ever bought, so a full sweep costs
+        # order_size x buy_rungs — not x levels. Counting all levels overstates
+        # the requirement by ~2x and rejects a capital ceiling that is exactly
+        # right (it flagged 18 USDT needed for a grid whose real sweep is 10).
+        buy_rungs = _grid.level_for_price(probe, 100.0) + 1
+        if cfg["order_size_usdt"] * buy_rungs > cfg["max_capital_usdt"]:
+            problems.append(
+                f"a full grid sweep needs "
+                f"{cfg['order_size_usdt'] * buy_rungs:.4f} USDT ({buy_rungs} buy rungs "
+                f"x {cfg['order_size_usdt']:.4f}) but [strategy].max_capital_usdt is "
+                f"{cfg['max_capital_usdt']:.4f} — the lowest rungs would never fill"
+            )
         problems.extend(
             f"grid: {p}" for p in _grid.validate_grid(
                 probe, float(addrs["fee"]) / 100.0, cfg["max_slippage_pct"]

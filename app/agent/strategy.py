@@ -132,7 +132,9 @@ def activate(network: str | None = None) -> dict[str, Any]:
     centre and never reaches a sell target.
     """
     network = network or chain.default_network()
-    problems = chain.check_config_consistency(network)
+    # scope="trading": a wrong-chain $U currency breaks SELLING, not trading, and
+    # must not stop the grid from arming.
+    problems = chain.check_config_consistency(network, scope="trading")
     if problems:
         raise RuntimeError("refusing to activate with config problems: " + "; ".join(problems))
 

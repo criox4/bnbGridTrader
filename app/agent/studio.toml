@@ -71,8 +71,15 @@ range_pct = 10.0             # grid half-width: +/-10% around the activation pri
 # scalar here would carry one chain's sizes onto the other the first time anyone
 # exported $BNB_NETWORK; chain.py refuses to run without an entry for the active
 # network. Re-measure before raising either.
-order_size_usdt  = { bsc-mainnet = 5.0,  bsc-testnet = 0.05 }
-max_capital_usdt = { bsc-mainnet = 50.0, bsc-testnet = 0.5 }
+# Mainnet is NOT depth-constrained (0.048% impact at 1 USDT). Its floor is GAS:
+# measured 2026-08-18 at 0.05 gwei, a round trip (2 swaps + 2 approves, ~349k
+# gas) costs $0.0106. Against a 2.34% realistic net edge that is
+#     1 U/rung -> gas eats 45% of the edge
+#     2 U/rung -> 23%        5 U/rung -> 9%        10 U/rung -> 4.5%
+# 2 U is the smallest size where the economics still make sense. A full sweep
+# is 5 buy rungs, so the cap is 5 x order size.
+order_size_usdt  = { bsc-mainnet = 2.0,  bsc-testnet = 0.05 }
+max_capital_usdt = { bsc-mainnet = 10.0, bsc-testnet = 0.5 }
 
 # Execution guards, also per-network. max_slippage_pct bounds the fill against
 # the QUOTE; max_price_impact_pct bounds the quote itself against spot. On the
@@ -80,7 +87,10 @@ max_capital_usdt = { bsc-mainnet = 50.0, bsc-testnet = 0.5 }
 # can be tight because the pool barely moves.
 max_slippage_pct     = { bsc-mainnet = 0.5, bsc-testnet = 1.0 }
 max_price_impact_pct = { bsc-mainnet = 0.5, bsc-testnet = 2.0 }
-min_gas_reserve_bnb = 0.02   # never spend the wallet below this; gas must survive
+# Per-network too: 0.02 BNB is free on testnet but ~$12 permanently held back on
+# mainnet, which is absurd next to a 10 USDT position. At 0.05 gwei, 0.002 BNB
+# (~$1.20) still covers ~100 round trips of gas.
+min_gas_reserve_bnb = { bsc-mainnet = 0.002, bsc-testnet = 0.02 }
 
 poll_interval_seconds = 60
 
