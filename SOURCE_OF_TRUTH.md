@@ -31,15 +31,15 @@ Mirrored from `app/agent/studio.toml` and `agentcore/agentcore.json`. Re-read th
 | --- | --- |
 | Project / runtime name | `bnbGridTrader` |
 | Framework · runtime · protocol | ADK · AgentCore · A2A |
-| Network | `bsc-testnet` |
+| Network | `bsc-mainnet` (deployed). Testnet work needs `BNB_NETWORK=bsc-testnet` |
 | Wallet | `evm-local` keystore, local signer — `0xFAf0ffd121947B9EE3920Fa0CfbF9EEEB0AcBF7f` (**throwaway**, imported key). Funded on bsc-testnet: ~0.30 BNB, 10 U |
 | LLM | OpenRouter, `openai/gpt-4o-mini` |
-| `$U` token | `0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565` |
+| `$U` token | `0xcE24439F2D9C6a2289F741120FE202248B666666` (mainnet). Testnet: `0xc70B8741…5565` |
 | List price | `100000000000000000` wei (0.1 U) |
-| Price clamp | floor `0` — **ceiling unset**, must be set before going live |
+| Price clamp | floor `0`, ceiling `1000000000000000000` (1 U) |
 | Quote TTL | 900 s (SDK cap) |
 | Auto-settle | off |
-| Storage | `local` (file://) — offline dev only, does not survive deploy |
+| Storage | `local` (file://), served back by `main.py`'s `/erc8183/job/{id}/response`. Dies with the host — IPFS is still the durable answer |
 | Build | CodeZip, entrypoint `main.py`, codeLocation `app/agent/`, PYTHON_3_14 |
 
 ## Invariants (full text in `AGENTS.md`)
@@ -77,15 +77,15 @@ Order and command names taken from the `/bnbagent-studio` skill and from what th
 
 Notes:
 
-- **`[storage].kind = "local"` cannot deliver to a buyer.** It writes a `file://`
-  deliverable to `~/.bag/deliverables/<project>/` and the agent mounts *no*
-  job-query endpoint, by design. `submit_result` then either fails (no
-  `ERC8183_AGENT_URL`) or publishes an unreachable URL on-chain — and this is true
-  even against `bag dev`, not just after deploy. `bag deploy prepare` raises it as
-  W10. `local` is correct only for offline dev where you read the file yourself.
-  Any real buyer flow needs `ipfs` plus a pinning service's `STORAGE_API_URL` /
-  `STORAGE_API_KEY`. **Deliberately not setting `ERC8183_AGENT_URL`** — with no
-  job-query endpoint it would only publish a URL that 404s.
+- **`[storage].kind = "local"` now DOES deliver — because we serve it.** The
+  scaffold's A2A app mounts no job-query route, so the
+  `{ERC8183_AGENT_URL}/job/{id}/response` that `submit_result` publishes on-chain
+  would 404 (`bag deploy prepare` raises this as W10, and the sibling deployment
+  404s on both its ports to this day). `main.py`'s `_serve_deliverables` closes
+  it by serving `$STORAGE_LOCAL_PATH/job-{id}.json`, which is exactly what
+  `LocalStorageProvider` writes. Caveat: this storage dies with the host, and the
+  on-chain URL cannot change while a job is unsettled — so IPFS remains the
+  durable answer, now an upgrade rather than a blocker.
 - **LLM runs through OpenRouter**, not Pieverse. `bag llm activate` is the Pieverse
   path (writes `PIEVERSE_LLM_API_KEY` + `[llm.pieverse].key_hash`); it is not
   required here, but note `bag deploy prepare` blocks on a missing `key_hash`
