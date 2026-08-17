@@ -198,6 +198,39 @@ def test_round_trips_ignores_unclosed_and_unlabelled():
     assert grid.realised_pnl(trades)["win_rate"] == 0.0
 
 
+def test_pending_orders_matches_decide():
+    """Every listed order must be one decide() would actually take."""
+    g = grid.build_grid(80.0, 120.0, 9)
+    filled = {2: 1.0, 5: 1.0}
+    orders = grid.pending_orders(g, filled, center_index=4)
+
+    # An armed grid is never empty: rungs 0,1,3,4 are unfilled and <= centre.
+    buys = [o for o in orders if o["side"] == "buy"]
+    assert [o["level"] for o in buys] == [0, 1, 3, 4], buys
+    # Nothing above centre is a buy — decide() would refuse it.
+    assert all(o["level"] <= 4 for o in buys)
+
+    sells = [o for o in orders if o["side"] == "sell"]
+    assert [o["level"] for o in sells] == [2, 5], sells
+    assert all(abs(o["trigger"] - g[o["level"] + 1]) < 1e-12 for o in sells)
+
+    # Each buy trigger really does make decide() buy that level — checked with no
+    # lots held, because a rung's buy price is also the sell target of the rung
+    # below it, and decide() sells first. Both orders are pending at that price;
+    # which one fires on a given poll is decide()'s business, not this list's.
+    for o in buys:
+        d = grid.decide(g, o["trigger"], {}, center_index=4)
+        assert d["action"] == "buy" and d["level"] == o["level"], (o, d)
+
+
+def test_pending_orders_top_lot_has_no_sell_target():
+    """A lot on the top rung cannot sell — listed with trigger None, not dropped."""
+    g = grid.build_grid(80.0, 120.0, 5)
+    orders = grid.pending_orders(g, {4: 2.0}, center_index=2)
+    top = [o for o in orders if o["level"] == 4]
+    assert len(top) == 1 and top[0]["side"] == "sell" and top[0]["trigger"] is None, top
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

@@ -184,6 +184,44 @@ def decide(
     }
 
 
+def pending_orders(
+    grid: list[float],
+    filled: dict[int, float],
+    *,
+    center_index: int,
+) -> list[dict[str, Any]]:
+    """Every order the grid intends to place, both sides.
+
+    A spot grid has no resting orders on any book, but it does have committed
+    intent, and the intent is derivable: this mirrors ``decide()``'s rules
+    exactly, so anything listed here is what the next qualifying poll will do.
+
+    - **sell** — one per open lot, triggering at the level above where it was
+      bought. A lot on the TOP rung has nowhere to sell to and gets
+      ``trigger: None``; it is still capital held, so it is still listed.
+    - **buy** — one per unfilled rung at or below ``center_index``. These are
+      the orders that make an armed-but-unfilled grid visible; report only the
+      sell side and a freshly activated grid looks idle when it is fully armed.
+
+    ``amount_base`` echoes whatever unit ``filled`` uses — the caller owns the
+    conversion, same as ``decide()``.
+    """
+    out: list[dict[str, Any]] = []
+    for i, level in enumerate(grid):
+        amount = float(filled.get(i) or 0.0)
+        if amount > 0:
+            out.append({
+                "level": i,
+                "side": "sell",
+                "trigger": grid[i + 1] if i + 1 < len(grid) else None,
+                "bought_at": level,
+                "amount_base": amount,
+            })
+        elif i <= center_index:
+            out.append({"level": i, "side": "buy", "trigger": level})
+    return out
+
+
 def realised_pnl(trades: list[dict[str, Any]]) -> dict[str, float]:
     """Realised PnL in quote currency from a completed trade log.
 

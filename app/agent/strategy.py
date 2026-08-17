@@ -582,26 +582,34 @@ def get_marketplace_data(network: str | None = None) -> dict[str, Any]:
 
 
 def get_open_orders(network: str | None = None) -> list[dict[str, Any]]:
-    """Open positions, one per filled rung (spec 5.5 ``get_open_orders``).
+    """The grid's open orders, both sides (spec 5.5 ``get_open_orders``).
 
-    This agent trades SPOT swaps, so there are no resting limit orders on any
-    book. What it has instead is a lot at a rung with a known sell target, which
-    is the same information a grid UI wants — labelled honestly rather than
-    pretending to be an order book.
+    This agent trades SPOT swaps, so nothing rests on a book — but the grid's
+    intent is fully determined by its rules, so every entry here is an order in
+    the sense that matters: a price at which this agent WILL trade, and what it
+    will trade there. ``resting: false`` says where they live, so no consumer
+    mistakes them for orders a venue is holding.
+
+    Both sides, deliberately. A sell per open lot and a buy per unfilled rung at
+    or below centre — an armed grid that has not yet filled has real committed
+    orders, and reporting only the fills would show it as empty.
     """
     network = network or chain.default_network()
     state = load_state(network)
     levels = [float(x) for x in state["grid"]]
-    out = []
-    for idx, amount in sorted(_filled_map(state).items()):
-        out.append({
-            "level": idx,
-            "bought_at": levels[idx] if idx < len(levels) else None,
-            "sell_target": levels[idx + 1] if idx + 1 < len(levels) else None,
-            "amount_base": amount / 1e18,
-            "kind": "open_position",  # not a resting order — see docstring
-        })
-    return out
+    if not levels:
+        return []
+    cfg = chain.strategy_config(network)
+    orders = grid.pending_orders(
+        levels, _filled_map(state), center_index=int(state["center_index"]),
+    )
+    for o in orders:
+        o["resting"] = False  # intent, not an order a venue is holding
+        if o["side"] == "sell":
+            o["amount_base"] = o["amount_base"] / 1e18
+        else:
+            o["amount_quote"] = cfg["order_size_usdt"]
+    return orders
 
 
 def get_grid(network: str | None = None) -> dict[str, Any]:

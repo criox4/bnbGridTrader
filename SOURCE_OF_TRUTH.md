@@ -119,7 +119,7 @@ and buyers pay $U for status reports and computed grid plans.
 
 | Module | Role |
 | --- | --- |
-| `app/agent/grid.py` | Pure math — levels, decisions, PnL, `plan_for()`. No chain, no I/O. `python test_grid.py` (20 checks). |
+| `app/agent/grid.py` | Pure math — levels, decisions, PnL, `plan_for()`, `pending_orders()`. No chain, no I/O. `python test_grid.py` (22 checks). |
 | `app/agent/chain.py` | Chain READS — pool price, balances, quoter. Address book only. |
 | `app/agent/grid_signing.py` | Chain WRITES — wrap / exact approve / swap. Fixed code, never a tool. |
 | `app/agent/strategy.py` | State, monitor loop, operator CLI, reports. |
@@ -223,8 +223,12 @@ deliberate:
   testnet, where `0x13f4EA83` is a different contract. Testnet falls back to the
   V3 SwapRouter (`0x414bf389`, 8 fields, with deadline). The ABI is chosen from
   the address book per network — sending one shape to the other router reverts.
-- **`get_open_orders` returns open POSITIONS, not resting orders.** This agent
-  trades spot swaps; there is no order book to have orders on.
+- **`get_open_orders` returns orders that rest nowhere.** This agent trades spot
+  swaps, so no venue holds anything — but the grid's intent is fully determined
+  by its rules, so both sides are reported: a `sell` per open lot (trigger = the
+  level above its buy) and a `buy` per unfilled rung at or below centre. Every
+  entry carries `resting: false`. Derived by `grid.pending_orders()`, which
+  mirrors `decide()` — anything listed is what the next qualifying poll does.
 
 ## Environment
 

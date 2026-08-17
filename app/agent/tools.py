@@ -126,7 +126,11 @@ def get_grid_status() -> dict:
 
 
 def get_open_orders() -> list:
-    """Open positions, one per filled rung, each with its sell target."""
+    """Open grid orders: a sell per held lot, a buy per unfilled rung below centre.
+
+    These are prices the grid WILL trade at, not orders resting on a venue —
+    each carries `resting: false`.
+    """
     return _strat.get_open_orders()
 
 

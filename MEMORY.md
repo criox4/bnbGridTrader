@@ -16,11 +16,18 @@ Entry format:
 
 ---
 
+## 2026-08-18 — `get_open_orders` reports both sides, not just the fills
+
+**Why:** the earlier entry justified reporting positions instead of resting orders, and that half was right — but it shipped only the SELL side. An armed grid with no fills yet returned `[]`, which reads as "nothing happening" when in fact four buy rungs are committed. Live testnet check: 4 real pending buys were invisible.
+**Approach:** `grid.pending_orders()` derives both sides from `decide()`'s own rules — a sell per open lot (trigger = level above its buy), a buy per unfilled rung at or below centre — so anything listed is what the next qualifying poll actually does. Each entry carries `resting: false`. Pure math in `grid.py`, so it is testable offline; `strategy.py` only attaches amounts. Two tests added (22 total).
+**Rejected:** faking a resting order book (the earlier call, still right — nothing rests anywhere). Also rejected asserting one decide() action per trigger price in the test: a rung's buy price IS the sell target of the rung below, and decide() sells first. Both orders are genuinely pending; which fires is decide()'s business, not this list's. The test checks the buy rule against an empty lot map instead.
+**Revisit when:** `decide()`'s buy or sell rule changes — `pending_orders()` mirrors it by hand and would silently start lying.
+
 ## 2026-08-18 — Closed the marketplace-spec gaps without weakening the LLM boundary
 
 **Why:** a cross-check against the marketplace spec found eight gaps — no Service Layer, no marketplace payload, missing `max_daily_loss` / `emergency_stop` / `cancelGrid` / `updateGrid`, spec tool names absent, and the wrong router.
 **Approach:** added them all. `app/service/` is the Service Layer (reads public, writes behind `SERVICE_API_KEY`, and an UNSET key 503s rather than running open). Spec tool names exist as thin aliases over the single implementation. `emergency_stop` LATCHES — `activate` refuses until `resume` — because a stop that auto-clears is just a pause.
-**Rejected:** exposing the spec's `execute_buy` / `execute_sell` / `record_trade` as LLM tools. The spec lists them alongside the read tools, but a name from a spec does not make a fund-moving function safe to hand to a model; they live in the write path instead. Also rejected making `get_open_orders` pretend to be an order book — this agent trades spot swaps, so it reports open POSITIONS and says so.
+**Rejected:** exposing the spec's `execute_buy` / `execute_sell` / `record_trade` as LLM tools. The spec lists them alongside the read tools, but a name from a spec does not make a fund-moving function safe to hand to a model; they live in the write path instead. Also rejected making `get_open_orders` pretend to be an order book — this agent trades spot swaps, so it says so. (Superseded in part: it now reports BOTH sides, still `resting: false` — see the entry above.)
 **Revisit when:** the spec adds a limit-order venue, which would make real open orders meaningful.
 
 ## 2026-08-18 — Smart Router is mainnet-only; verified by selector, not by presence
