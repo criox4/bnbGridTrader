@@ -142,6 +142,46 @@ slippage" and still loses 22%. Hence the separate `max_price_impact_pct` guard
 and the small `order_size_usdt`. Re-measure before raising either, and again on
 mainnet (far deeper).
 
+## Deployment
+
+Live on **bsc-mainnet** at `https://bnb-grid.172-104-171-139.nip.io`
+(agent card, `negotiate`, `notify_funded`, and `/erc8183/job/{id}/response`).
+
+| | |
+| --- | --- |
+| Host | `zd-instance` — 172.104.171.139, Ubuntu, root |
+| Path | `/root/BNBAgents/bnb-grid-trader/` (same layout as the sibling agents) |
+| Container | `bnb-grid-agent`, image `bnb-grid-trader:latest`, `127.0.0.1:9001 -> 9000` |
+| Ingress | nginx `bnb-grid.conf` + certbot TLS; loopback-only upstream |
+| Trading | **`GRID_MONITOR=0` — not trading.** Serving quotes and plans only. |
+
+Deploy / redeploy:
+
+```bash
+rsync -az --delete --exclude '.git/' --exclude '**/.venv/' --exclude '__pycache__/' \
+      --exclude 'agentcore/cdk/node_modules/' --exclude 'app/agent/wheels/' \
+      --exclude '.grid_state.*' ./ zd-instance:/root/BNBAgents/bnb-grid-trader/
+ssh zd-instance 'cd /root/BNBAgents/bnb-grid-trader \
+  && chown -R 10001:10001 .studio/wallets && chmod 700 .studio/wallets \
+  && chmod 600 .studio/wallets/*.json \
+  && set -a && . .studio/.env.local && set +a \
+  && export PUBLIC_URL=https://bnb-grid.172-104-171-139.nip.io \
+            BNB_NETWORK=bsc-mainnet GRID_MONITOR=0 HOST_PORT=9001 \
+  && docker compose up -d --build'
+```
+
+Three things that fail silently if skipped — all three were hit on the first deploy:
+
+1. **`chown 10001` the keystore.** rsync preserves the macOS uid, so it arrives
+   `600 501:staff`. The container boots healthy and only fails at the FIRST
+   SIGNATURE, as a `PermissionError` through the A2A error channel.
+2. **`AGENTCORE_RUNTIME_URL` must be set.** `serve_a2a` takes the card's public
+   `url` from it; AgentCore injects it, a VPS does not. Without it the card
+   served `http://localhost:9000/` — pointing every buyer at their own machine.
+3. **`PUBLIC_URL` must be the real hostname.** `submit_result` publishes
+   `{ERC8183_AGENT_URL}/job/{id}/response` ON-CHAIN and it can never change while
+   a submitted job is unsettled.
+
 ## Environment
 
 - `agentcore`, `uv`, `docker` and `bag` (0.0.5) are on PATH; `bag` is also installed

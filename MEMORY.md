@@ -16,6 +16,20 @@ Entry format:
 
 ---
 
+## 2026-08-18 — Serve deliverables ourselves rather than wait for IPFS
+
+**Why:** `submit_result` publishes `{ERC8183_AGENT_URL}/job/{id}/response` on-chain, but the A2A app mounts no such route — so a buyer can pay and never fetch. Checked the sibling deployment expecting to copy its fix: **it 404s too**, on both its ports. The gap is unsolved there, not solved.
+**Approach:** a ~30-line read-only ASGI route in `main.py` serving `$STORAGE_LOCAL_PATH/job-{id}.json`, which is exactly what `LocalStorageProvider` writes. `int()` on the path segment is the traversal guard; verified 200 / 404 / traversal-blocked.
+**Rejected:** deploying with the gap and calling it a known issue — that ships an agent that sells work it cannot deliver. Also rejected blocking on IPFS: it needs a paid pinning service, and IPFS remains the better answer for durability (this dies with the host), just not a reason to ship broken now.
+**Revisit when:** wiring IPFS storage, which supersedes this for anything that must outlive the VPS.
+
+## 2026-08-18 — Mainnet on the burned throwaway wallet, by explicit decision
+
+**Why:** deploying to mainnet with the key that was pasted into chat. Flagged it; the user chose to reuse it rather than rotate.
+**Approach:** deployed with `GRID_MONITOR=0` and the mainnet wallet essentially unfunded (0.0023 BNB, 0 USDT) — it serves signed quotes and plans but the gas-reserve guard refuses every write, so there is nothing to steal yet.
+**Rejected:** a fresh `bag wallet new` for mainnet, which is what the earlier entry recommended. Overridden deliberately, not forgotten.
+**Revisit when:** funding it for real. Anyone with this transcript can drain that address, and an ERC-8004 registration would bind it to the agent's identity permanently — so rotate BEFORE funding or registering, not after.
+
 ## 2026-08-18 — Grid sizing set from measured pool depth, not from a round number
 
 **Why:** the first `[strategy]` defaults used `order_size_usdt = 1.0`. Quoting that size against the live testnet pool returned **22.8% price impact** — the impact guard would have refused every single trade and the grid would have sat active and idle, looking healthy.

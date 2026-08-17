@@ -36,6 +36,12 @@ services:
       # that route out of STORAGE_LOCAL_PATH. Pointing this at localhost
       # publishes an address no buyer can reach.
       ERC8183_AGENT_URL: ${PUBLIC_URL:?set PUBLIC_URL}/erc8183
+      # The agent card's advertised `url`. serve_a2a overwrites the card url from
+      # this variable, which AgentCore injects — but on a VPS nothing sets it, so
+      # the card falls back to a LOCALHOST dev placeholder and every buyer that
+      # resolves the card is pointed at their own machine. Verified: without this
+      # the public card served `http://localhost:9000/`.
+      AGENTCORE_RUNTIME_URL: ${PUBLIC_URL}/
       # The autonomous grid loop. EXACTLY ONE process may run it: the flock in
       # strategy.py excludes another process on the same filesystem but cannot
       # see one on another host. Set to 0 to serve quotes and plans without
