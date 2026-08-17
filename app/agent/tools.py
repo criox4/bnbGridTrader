@@ -30,7 +30,99 @@ from google.adk.tools import FunctionTool
 
 from bnbagent_studio_core.tools import chain_readonly as cr
 
+import chain as _chain
+import strategy as _strat
+
+
+# --- Grid tools the LLM may call ------------------------------------------------
+# `network` is NOT exposed on any of these. It is a config fact, not a decision:
+# left visible, a model fills it in and eventually invents a value (`'bsc'`),
+# which either errors or — worse — reads the wrong chain. Deterministic code
+# decides what the model operates on.
+#
+# Docstrings are what the model sees, so they say what the tool returns.
+def get_price() -> dict:
+    """Current BNB price in USDT, read from the PancakeSwap V3 pool tick."""
+    return _chain.get_price()
+
+
+def get_balances() -> dict:
+    """This agent's BNB, WBNB and USDT balances."""
+    return _chain.get_balances()
+
+
+def get_status_report() -> str:
+    """Finished status report for the grid strategy — status, grid, PnL, balances.
+
+    PREFER THIS for any question about how the strategy is doing: every figure in
+    it is formatted by code. Quote it verbatim.
+    """
+    return _strat.get_status_report()
+
+
+def get_status() -> dict:
+    """Raw strategy state: status, grid bounds, open lots, trade count, balances."""
+    return _strat.get_status()
+
+
+def get_grid() -> dict:
+    """Every grid level, which levels hold a lot, and where price sits now."""
+    return _strat.get_grid()
+
+
+def get_performance() -> dict:
+    """Realised PnL, round trips, and open inventory. Realised and unrealised
+    are reported SEPARATELY — never add them together."""
+    return _strat.get_performance()
+
+
+def check_decision() -> dict:
+    """What the strategy would do at the current price. READ-ONLY — describing a
+    decision never executes it."""
+    return _strat.check()
+
+
+def get_plan(capital_usdt: float | None = None) -> dict:
+    """Compute a grid trading plan around the current price for ``capital_usdt``.
+
+    This is the sellable product: levels, spacing, order size, per-round-trip
+    edge after fees and slippage, and the assumptions behind it. All figures are
+    computed by code — quote them, do not recompute them.
+    """
+    return _strat.get_plan(capital_usdt)
+
+
+def quote_trade(amount_usdt: float) -> dict:
+    """Simulate buying BNB with ``amount_usdt`` — output and PRICE IMPACT.
+
+    Use this to answer "how big a trade can this pool take". Read-only
+    (``eth_call``); it never sends a transaction.
+    """
+    a = _chain.addresses()
+    wei = int(amount_usdt * 10 ** _chain.decimals(_chain.default_network(), a["usdt"]))
+    return _chain.quote_swap(a["usdt"], a["wbnb"], wei)
+
+
+# Read-only grid + strategy tools. The WRITE path (approve / swap / wrap) lives in
+# grid_signing.py and the loop controls (activate / pause / seed / step) live in
+# strategy.py as operator-only CLI actions. NONE of them belong here: activate and
+# pause control the thing that moves funds, and seed and step move funds directly,
+# so keeping them out means no prompt injection can start, stop, or trigger a trade.
+GRID_READ_TOOLS = [
+    FunctionTool(get_price),
+    FunctionTool(get_balances),
+    FunctionTool(get_status_report),   # prefer this — figures formatted by code
+    FunctionTool(get_status),
+    FunctionTool(get_grid),
+    FunctionTool(get_performance),
+    FunctionTool(check_decision),
+    FunctionTool(get_plan),
+    FunctionTool(quote_trade),
+]
+
 LLM_READ_TOOLS = [
+    *GRID_READ_TOOLS,
+
     # --- Wallet & chain basics ---
     FunctionTool(cr.wallet_info),
     FunctionTool(cr.balance_native),

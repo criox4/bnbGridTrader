@@ -10,6 +10,16 @@
 # secret file here (never commit it).
 agentcore/.env.local
 
+# Grid strategy runtime state: which levels hold lots, and the trade log.
+# Machine-specific and rewritten on every trade, so it does not belong in git.
+# NOTE the level->lot mapping exists ONLY here — the chain knows the balances but
+# not which rung bought them. Losing this file orphans open lots: they stay in
+# the wallet but the grid forgets it owns them and will re-buy those rungs.
+# Back it up before wiping a host; `python strategy.py grid` prints the mapping.
+.grid_state.*.json
+.grid_state.*.lock
+.grid_state.*.tmp
+
 # Python
 __pycache__/
 *.py[cod]

@@ -156,7 +156,20 @@ agent = Agent(
         "context helps. If a paid-data tool such as `buy_with_x402` is available "
         "to you, USE IT to fetch the data a task needs — those merchants (e.g. "
         "CoinMarketCap) charge via on-chain wallet payment, NOT an API key; never "
-        "reply that you cannot complete the task for lack of an API key."
+        "reply that you cannot complete the task for lack of an API key. "
+        # Numeric discipline. For a paid grid report or plan the numbers ARE the
+        # product, so they come from code, not from the model. Every figure the
+        # tools return is already computed and formatted; recomputing one is how
+        # a status report acquires a number that was never true.
+        "This agent runs a GRID TRADING strategy. For ANY question about the "
+        "strategy's status or economics, call `get_status_report` and quote its "
+        "figures VERBATIM. For a requested grid plan, call `get_plan` and present "
+        "its levels and figures as given. Never compute, convert, round, or "
+        "reformat a financial number yourself, and never state a figure you did "
+        "not read from a tool result — if one is not there, say it is unavailable. "
+        "Realised and unrealised PnL are separate; never add them together. "
+        "You cannot place, start, stop, or change trades: those are operator "
+        "actions outside your tools. Say so plainly if asked to trade."
     ),
     # LLM_READ_TOOLS = read-only chain tools (wallet, balances, ERC-8004/8183
     # queries). Edit `tools.py` to add/remove. These are READ-ONLY — the agent
@@ -202,13 +215,16 @@ async def _run_llm(prompt: str, *, session_id: str) -> str:
 
 
 def _default_network() -> str:
-    """studio.toml ``[network].default`` (best-effort; used by the funded sweep)."""
-    try:
-        from bnbagent_studio_core import config
+    """The active network for the seller runtime (job lookups, funded sweep).
 
-        return str(((config.load_studio_toml() or {}).get("network") or {}).get("default") or "bsc-testnet")
-    except Exception:  # noqa: BLE001
-        return "bsc-testnet"
+    Delegates to ``chain.default_network()`` rather than reading
+    ``[network].default`` itself: that version ignores ``$BNB_NETWORK``, so
+    exporting mainnet would move the strategy while leaving the seller polling
+    testnet jobs. A second resolver for one fact always drifts from the first.
+    """
+    import chain
+
+    return chain.default_network()
 
 
 # --- A2A surface --------------------------------------------------------------
@@ -306,6 +322,35 @@ async def _emit(send, start_message, body: bytes):
         start_message = {**start_message, "headers": headers}
         await send(start_message)
     await send({"type": "http.response.body", "body": new_body, "more_body": False})
+
+
+# --- Grid monitor loop ----------------------------------------------------------
+# The grid trader is autonomous: a background thread polls the pool and trades
+# when the deterministic check says so. It only acts while strategy state is
+# "active" (`python strategy.py activate`), so importing this module never starts
+# moving funds on its own. The decision and the calldata are both fixed code —
+# see strategy.py / grid_signing.py.
+try:
+    from chain import check_config_consistency
+    from strategy import start_monitor
+
+    # Loud at boot: cross-field config errors (an $U currency from the other
+    # chain, a grid too tight to cover its own costs) are invisible to per-field
+    # validation and surface only as a bad trade or a worthless signed quote.
+    # Warn rather than exit so a config typo cannot take the A2A surface down.
+    for _problem in check_config_consistency():
+        logging.getLogger("seller-agent").error("CONFIG: %s", _problem)
+
+    # EXACTLY ONE process in a deployment may run the loop, and it must be chosen
+    # explicitly — hence opt-in rather than the default. strategy._trade_lock is
+    # an flock, which excludes a second process on the SAME filesystem but cannot
+    # see one on another host: split the seller and the monitor across two
+    # machines with this defaulting to on, and both would trade the same grid.
+    if (os.environ.get("GRID_MONITOR") or "").strip().lower() in ("1", "true", "yes"):
+        start_monitor()
+        logging.getLogger("seller-agent").info("grid monitor started (GRID_MONITOR set)")
+except Exception:  # noqa: BLE001 — the A2A surface must come up regardless
+    logging.getLogger("seller-agent").exception("grid monitor not started")
 
 
 if __name__ == "__main__":

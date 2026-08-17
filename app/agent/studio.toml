@@ -44,6 +44,33 @@ default_estimated_completion_seconds = 600
 poll_interval_seconds = 30
 auto_settle = false                            # opt-in: detect dispute-window-elapsed → settle
 
+[strategy]
+# Grid parameters. Read by chain.strategy_config(); edit here, not in code.
+# A full sweep costs order_size_usdt * levels, which must fit max_capital_usdt.
+pair = "BNB/USDT"
+fee = 500                    # pool fee tier, hundredths of a bip (500 = 0.05%)
+
+levels = 9                   # rungs spanning the range, geometrically spaced
+range_pct = 10.0             # grid half-width: +/-10% around the activation price
+# Sized against MEASURED depth of the bsc-testnet BNB/USDT fee-500 pool, not
+# guessed. Live quoter readings, 2026-08-18:
+#   0.01 USDT -> 0.13% impact      0.5 USDT ->  7.80% impact
+#   0.05 USDT -> 0.47% impact      1.0 USDT -> 22.85% impact
+# At 1.0 USDT the impact guard blocks every trade and the grid never moves.
+# Re-measure before raising this, and re-measure again on mainnet (far deeper).
+order_size_usdt = 0.05       # USDT spent per buy rung
+max_capital_usdt = 0.5       # hard ceiling on total USDT deployed into the grid
+
+# Execution guards. max_slippage_pct bounds the fill against the QUOTE;
+# max_price_impact_pct bounds the quote itself against spot — on the shallow
+# testnet pool the second one is what actually protects you (1 BNB moves that
+# pool ~44%), so keep order sizes small enough to stay under it.
+max_slippage_pct = 1.0
+max_price_impact_pct = 2.0
+min_gas_reserve_bnb = 0.02   # never spend the wallet below this; gas must survive
+
+poll_interval_seconds = 60
+
 [storage]
 # Deliverables written to local disk (file://). Offline-dev only —
 # does NOT survive deploy. Path from STORAGE_LOCAL_PATH.

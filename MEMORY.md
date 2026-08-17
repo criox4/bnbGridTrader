@@ -16,6 +16,20 @@ Entry format:
 
 ---
 
+## 2026-08-18 — Grid sizing set from measured pool depth, not from a round number
+
+**Why:** the first `[strategy]` defaults used `order_size_usdt = 1.0`. Quoting that size against the live testnet pool returned **22.8% price impact** — the impact guard would have refused every single trade and the grid would have sat active and idle, looking healthy.
+**Approach:** measured the impact curve with the quoter before committing to numbers (0.01 → 0.13%, 0.05 → 0.47%, 0.5 → 7.8%, 1.0 → 22.8%) and set `order_size_usdt = 0.05` / `max_capital_usdt = 0.5`. The curve is recorded in `studio.toml` next to the values so the next person sees why they are small.
+**Rejected:** relying on `max_slippage_pct` alone — it bounds quote→fill drift, not the impact of the trade's own size, so a 22% impact swap fills "within slippage" and still loses 22%. That is why `max_price_impact_pct` exists as a separate guard.
+**Revisit when:** trading mainnet (far deeper — re-measure, don't assume) or if the testnet pool's liquidity changes.
+
+## 2026-08-18 — Geometric grid spacing, anchored at activation
+
+**Why:** two design choices that are invisible in code review but decide whether the strategy makes money.
+**Approach:** geometric spacing (constant ratio between rungs) so every rung earns the same percentage; and the grid is anchored at the activation price, never re-centred.
+**Rejected:** arithmetic spacing — the bottom rungs would earn several times more per fill than the top ones, quietly making low prices the only profitable region. Re-centring on each poll — that is not a grid: it buys every dip at the new centre and never reaches a sell target.
+**Revisit when:** adding a deliberate trend-following mode, which would re-anchor on an explicit rule rather than every poll.
+
 ## 2026-08-14 — ERC-8004 registration and IPFS storage both deferred
 
 **Why:** "configure everything" ran out of things that could be set without a decision. Both remaining items commit to something external — an on-chain agentURI, and a paid pinning service.

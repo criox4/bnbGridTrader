@@ -66,7 +66,8 @@ Order and command names taken from the `/bnbagent-studio` skill and from what th
 | ✅ | `[payments.erc8183].max_price` — clamp ceiling | `1000000000000000000` (1 U, 10× list), matching the sibling |
 | ✅ | `bag doctor` — scaffold gate | 3 WARNs, no FAILs |
 | ⏸ | `[storage].kind = "ipfs"` + `STORAGE_API_URL` / `STORAGE_API_KEY` | **deferred** — needs a pinning service; `local` is fine until a buyer fetches |
-| ⬜ | Write the grid-trading strategy — no `[strategy]` block, no strategy code | not started |
+| ✅ | Grid-trading strategy — `[strategy]` block + `chain.py` / `grid.py` / `grid_signing.py` / `strategy.py` | built; live on testnet |
+| ✅ | Activate on testnet — seeded USDT, grid armed, first buy executed | 1 open lot at level 4 |
 | ⬜ | `bag dev` — local A2A on `:9000`, exercise negotiate / notify_funded | never run |
 | ⏸ | `bag erc8004 register` — writes `[identity]` | **deferred** until a real endpoint exists (gas-sponsored on testnet via MegaFuel, so no cost pressure to rush) |
 | ⬜ | Ship — `bag deploy` (needs AWS creds) **or** Docker; see below | undecided |
@@ -102,6 +103,44 @@ Notes:
   mainnet id `265375` aged out of the 8004scan indexer the CLI queries, so the
   endpoint had to be updated by token id through the library. Register with the
   final endpoint if you can.
+
+## The strategy
+
+Two products from one agent: an autonomous grid trades the wallet's own capital,
+and buyers pay $U for status reports and computed grid plans.
+
+| Module | Role |
+| --- | --- |
+| `app/agent/grid.py` | Pure math — levels, decisions, PnL, `plan_for()`. No chain, no I/O. `python test_grid.py` (15 checks). |
+| `app/agent/chain.py` | Chain READS — pool price, balances, quoter. Address book only. |
+| `app/agent/grid_signing.py` | Chain WRITES — wrap / exact approve / swap. Fixed code, never a tool. |
+| `app/agent/strategy.py` | State, monitor loop, operator CLI, reports. |
+
+Grid shape: `levels` rungs geometrically spaced over ±`range_pct` around the
+**activation** price. Equal ratios mean every rung earns the same percentage;
+with arithmetic spacing the bottom rungs earn several times more than the top
+ones. A lot bought at level *i* sells at level *i+1*. The grid is anchored at
+activation and does NOT follow price — a grid that re-centres each poll buys
+every dip at the new centre and never reaches a sell target.
+
+Operator actions (never LLM tools — they move funds or control what does):
+
+```
+python strategy.py activate | pause | status | grid | plan | check
+python strategy.py seed 0.01      # swap BNB -> USDT so buys have quote currency
+python strategy.py step [--force] # run exactly one decision
+```
+
+The monitor loop is opt-in via `GRID_MONITOR=1`, because exactly one process may
+run it and the `flock` guard cannot see a process on another host.
+
+**Pool depth is the binding constraint, not slippage.** Measured live on the
+bsc-testnet BNB/USDT fee-500 pool, 2026-08-18: 0.01 USDT → 0.13% impact,
+0.05 → 0.47%, 0.5 → 7.8%, 1.0 → **22.8%**. The slippage floor cannot catch this —
+the quote already contains the impact, so a 22% impact trade fills "within
+slippage" and still loses 22%. Hence the separate `max_price_impact_pct` guard
+and the small `order_size_usdt`. Re-measure before raising either, and again on
+mainnet (far deeper).
 
 ## Environment
 
