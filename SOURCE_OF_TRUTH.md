@@ -20,7 +20,7 @@ It is not a plain AgentCore app — see `AGENTS.md` for the hard invariants.
 | Deploy target (account + region) | `agentcore/aws-targets.json` |
 | Last deployed state | `agentcore/.cli/deployed-state.json` |
 | Agent dependencies | `app/agent/pyproject.toml` |
-| Secrets | `.studio/.env.local`, `agentcore/.env.local` — both gitignored, never read into chat |
+| Secrets | `.studio/.env.local` (`WALLET_PASSWORD`, `OPENROUTER_API_KEY`, `SERVICE_API_KEY`), `agentcore/.env.local` — both gitignored, never read into chat |
 | Wallet keystore | `.studio/wallets/` — workspace root, **never** under `app/agent/` |
 
 ## Current configuration
@@ -32,7 +32,7 @@ Mirrored from `app/agent/studio.toml` and `agentcore/agentcore.json`. Re-read th
 | Project / runtime name | `bnbGridTrader` |
 | Framework · runtime · protocol | ADK · AgentCore · A2A |
 | Network | `bsc-mainnet` (deployed). Testnet work needs `BNB_NETWORK=bsc-testnet` |
-| Wallet | `evm-local` keystore, local signer — `0xFAf0ffd121947B9EE3920Fa0CfbF9EEEB0AcBF7f` (**throwaway**, imported key). Funded on bsc-testnet: ~0.30 BNB, 10 U |
+| Wallet | `evm-local` keystore, local signer — `0xFAf0ffd121947B9EE3920Fa0CfbF9EEEB0AcBF7f` (**throwaway**, imported key). Balances move; read them with `bag wallet balance --network <n>` rather than trusting a number here |
 | LLM | OpenRouter, `openai/gpt-4o-mini` |
 | `$U` token | `0xcE24439F2D9C6a2289F741120FE202248B666666` (mainnet). Testnet: `0xc70B8741…5565` |
 | List price | `100000000000000000` wei (0.1 U) |
@@ -41,6 +41,10 @@ Mirrored from `app/agent/studio.toml` and `agentcore/agentcore.json`. Re-read th
 | Auto-settle | off |
 | ERC-8004 id | mainnet `269233` ("BNB Grid Trader (test)"), testnet `1838` — per-network, both on the same address |
 | Storage | `local` (file://), served back by `main.py`'s `/erc8183/job/{id}/response`. Dies with the host — IPFS is still the durable answer |
+| Grid | 9 levels, ±10% around the activation price, geometric spacing |
+| Sizing (mainnet) | 2 U/rung, 10 U cap, 0.5% slippage + 0.5% impact guards, 0.002 BNB gas reserve, 1 U daily-loss breaker |
+| Sizing (testnet) | 0.05 U/rung, 0.5 U cap, 1% slippage + 2% impact guards, 0.02 BNB gas reserve, breaker off |
+| Router | Smart Router on mainnet, V3 SwapRouter on testnet (chosen per network from the address book) |
 | Build | CodeZip, entrypoint `main.py`, codeLocation `app/agent/`, PYTHON_3_14 |
 
 ## Invariants (full text in `AGENTS.md`)
@@ -115,7 +119,7 @@ and buyers pay $U for status reports and computed grid plans.
 
 | Module | Role |
 | --- | --- |
-| `app/agent/grid.py` | Pure math — levels, decisions, PnL, `plan_for()`. No chain, no I/O. `python test_grid.py` (15 checks). |
+| `app/agent/grid.py` | Pure math — levels, decisions, PnL, `plan_for()`. No chain, no I/O. `python test_grid.py` (20 checks). |
 | `app/agent/chain.py` | Chain READS — pool price, balances, quoter. Address book only. |
 | `app/agent/grid_signing.py` | Chain WRITES — wrap / exact approve / swap. Fixed code, never a tool. |
 | `app/agent/strategy.py` | State, monitor loop, operator CLI, reports. |
@@ -132,8 +136,14 @@ Operator actions (never LLM tools — they move funds or control what does):
 
 ```
 python strategy.py activate | pause | status | grid | plan | check
+python strategy.py marketplace | orders | performance
 python strategy.py seed 0.01      # swap BNB -> USDT so buys have quote currency
 python strategy.py step [--force] # run exactly one decision
+python strategy.py cancel         # cancelGrid — SELLS every open lot, then clears
+python strategy.py update L U N   # updateGrid — re-shape in place, keeping lots
+python strategy.py stop "reason"  # emergency stop; LATCHES (activate refuses)
+python strategy.py resume         # release the emergency stop
+python strategy.py reset          # forget grid + log WITHOUT selling
 ```
 
 The monitor loop is opt-in via `GRID_MONITOR=1`, because exactly one process may
@@ -172,8 +182,18 @@ ssh zd-instance 'cd /root/BNBAgents/bnb-grid-trader \
   && chmod 600 .studio/wallets/*.json \
   && set -a && . .studio/.env.local && set +a \
   && export PUBLIC_URL=https://bnb-grid.172-104-171-139.nip.io \
-            BNB_NETWORK=bsc-mainnet GRID_MONITOR=0 HOST_PORT=9001 \
+            BNB_NETWORK=bsc-mainnet GRID_MONITOR=0 \
+            HOST_PORT=9001 SERVICE_HOST_PORT=8081 \
   && docker compose up -d --build'
+```
+
+`SERVICE_API_KEY` comes from `.studio/.env.local` via the `set -a` above. It gates
+every fund-moving REST endpoint; when unset those endpoints return 503 rather than
+running open, so a fresh deploy never briefly exposes `/cancel` to the internet.
+`GRID_MONITOR` drives the SERVICE container's monitor — the agent container is
+pinned to 0 so exactly one process ever polls.
+
+```bash
 ```
 
 Three things that fail silently if skipped — all three were hit on the first deploy:
