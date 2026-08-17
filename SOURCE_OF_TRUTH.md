@@ -119,6 +119,7 @@ and buyers pay $U for status reports and computed grid plans.
 | `app/agent/chain.py` | Chain READS — pool price, balances, quoter. Address book only. |
 | `app/agent/grid_signing.py` | Chain WRITES — wrap / exact approve / swap. Fixed code, never a tool. |
 | `app/agent/strategy.py` | State, monitor loop, operator CLI, reports. |
+| `app/service/main.py` | Service Layer (spec §2) — REST, marketplace payload, job visibility. Holds no key; owns the monitor. |
 
 Grid shape: `levels` rungs geometrically spaced over ±`range_pct` around the
 **activation** price. Equal ratios mean every rung earns the same percentage;
@@ -155,7 +156,8 @@ Live on **bsc-mainnet** at `https://bnb-grid.172-104-171-139.nip.io`
 | --- | --- |
 | Host | `zd-instance` — 172.104.171.139, Ubuntu, root |
 | Path | `/root/BNBAgents/bnb-grid-trader/` (same layout as the sibling agents) |
-| Container | `bnb-grid-agent`, image `bnb-grid-trader:latest`, `127.0.0.1:9001 -> 9000` |
+| Containers | `bnb-grid-agent` (A2A, `127.0.0.1:9001`) + `bnb-grid-service` (REST, `127.0.0.1:8081`), one image |
+| Service API | `https://bnb-grid-api.172-104-171-139.nip.io` — reads public, writes need `X-API-Key` |
 | Ingress | nginx `bnb-grid.conf` + certbot TLS; loopback-only upstream |
 | Trading | **`GRID_MONITOR=0` — not trading.** Serving quotes and plans only. |
 
@@ -185,6 +187,24 @@ Three things that fail silently if skipped — all three were hit on the first d
 3. **`PUBLIC_URL` must be the real hostname.** `submit_result` publishes
    `{ERC8183_AGENT_URL}/job/{id}/response` ON-CHAIN and it can never change while
    a submitted job is unsettled.
+
+## Marketplace spec compliance
+
+Built against `BNB Agent Studio Marketplace` §5 (Agent #2). Deviations that remain
+deliberate:
+
+- **Spacing defaults to geometric**, not the spec example's arithmetic. Both are
+  supported via `[strategy].spacing`; geometric is the default because equal
+  ratios make every rung earn the same percentage, where arithmetic makes the
+  bottom rungs worth several times more than the top ones. Set `spacing =
+  "arithmetic"` to match the spec example exactly.
+- **Smart Router on mainnet only.** Spec §5.1 requires it; it is deployed on
+  mainnet (selector `0x04e45aaf`, 7-field params, no deadline) and NOT on
+  testnet, where `0x13f4EA83` is a different contract. Testnet falls back to the
+  V3 SwapRouter (`0x414bf389`, 8 fields, with deadline). The ABI is chosen from
+  the address book per network — sending one shape to the other router reverts.
+- **`get_open_orders` returns open POSITIONS, not resting orders.** This agent
+  trades spot swaps; there is no order book to have orders on.
 
 ## Environment
 

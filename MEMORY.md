@@ -16,6 +16,13 @@ Entry format:
 
 ---
 
+## 2026-08-18 — Smart Router is mainnet-only; verified by selector, not by presence
+
+**Why:** spec §5.1 mandates the PancakeSwap Smart Router. `0x13f4EA83` has code on BOTH chains, so a presence check would have said "deployed, use it everywhere" — and the testnet bytecode is a third the size, i.e. a different contract. That is the same trap the address book documents for `quoter_v2`.
+**Approach:** probed each router's runtime bytecode for the `exactInputSingle` SELECTOR. Mainnet Smart Router exposes the 7-field form `0x04e45aaf` (no deadline); the V3 SwapRouter exposes the 8-field `0x414bf389` (with deadline). Router AND ABI are now chosen per network from the address book, and the approve targets whichever router will actually pull the tokens.
+**Rejected:** assuming one address works on both chains; assuming the two routers share a parameter tuple. They do not — the Smart Router moved `deadline` into multicall.
+**Revisit when:** PancakeSwap deploys a Smart Router to testnet, or a newer router version changes the tuple again.
+
 ## 2026-08-18 — Serve deliverables ourselves rather than wait for IPFS
 
 **Why:** `submit_result` publishes `{ERC8183_AGENT_URL}/job/{id}/response` on-chain, but the A2A app mounts no such route — so a buyer can pay and never fetch. Checked the sibling deployment expecting to copy its fix: **it 404s too**, on both its ports. The gap is unsolved there, not solved.
