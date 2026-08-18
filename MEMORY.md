@@ -16,6 +16,18 @@ Entry format:
 
 ---
 
+## 2026-08-18 — End-to-end seller lifecycle reached SUBMITTED on mainnet and COMPLETED on a fork
+**Why:** the agent needed a real test of the full seller path, not only quote signing and isolated grid trades.
+**Approach:** ran a temporary local A2A seller against BSC mainnet with a 0.02 U smoke price: negotiate → quote anchoring → create/register/set budget/fund → `notify_funded` → OpenRouter work → signed submit. Mainnet job 56608 reached `SUBMITTED`; a disposable fork of the same state advanced seven days and verified `router.settle` reaches `COMPLETED` without waiting or spending another mainnet transaction.
+**Rejected:** changing the production price/wallet or pretending the mainnet job was already settled. The real job remains `SUBMITTED` until its seven-day dispute window expires.
+**Revisit when:** the mainnet job's dispute window expires; settle it on mainnet and verify the final U transfer. The same run exposed that the local deliverable route expects `job-{id}.json` while the SDK writes `erc8183-job-{id}.json`, so fetch is not production-ready until that mismatch is fixed.
+
+## 2026-08-18 — Cross-wallet mainnet smoke test stayed isolated from the deployed signer
+**Why:** verify that a second throwaway wallet can execute the grid write path without silently replacing the wallet configured for the live seller agent.
+**Approach:** used a temporary workspace-level keystore and state directory, seeded only a small USDT balance, activated the mainnet grid, and completed one guarded buy. Receipt inspection confirmed the seed swap, approval, and grid swap all came from the second wallet and mined successfully. The repository config, deployed wallet, and live monitor were left unchanged.
+**Rejected:** switching `app/agent/studio.toml` or redeploying the live seller for this smoke test — that would turn an isolated wallet-selection test into a production signer rotation.
+**Revisit when:** the second wallet is explicitly promoted to the live signer; rotate the pasted key first and update the deployment secrets/config together.
+
 ## 2026-08-18 — Why settlement waits, and the one way to make it not wait
 
 **Why:** "if the buyer approves, why wait 7 days?" Verified against the ABIs, the local SDK docs, the EIP text and free `eth_call` probes rather than reasoning from the SDK alone.

@@ -294,11 +294,16 @@ def _serve_deliverables(app):
 
         job_id = int(match.group(1))  # int() is the path-traversal guard
         base = _Path(os.environ.get("STORAGE_LOCAL_PATH") or ".agent-data")
-        path = base / f"job-{job_id}.json"
+        # The SDK's submit_result passes an explicit filename to storage
+        # (job_ops.py: upload(data, f"erc8183-job-{job_id}.json")), so that name
+        # wins. LocalStorageProvider's own fallback when no name is given is
+        # "job-{id}.json", which is what an upload from anywhere else produces —
+        # serve both rather than depend on which path wrote the file.
+        candidates = [base / f"erc8183-job-{job_id}.json", base / f"job-{job_id}.json"]
         try:
-            body = path.read_bytes()
+            body = next(p.read_bytes() for p in candidates if p.is_file())
             status = 200
-        except OSError:
+        except (OSError, StopIteration):
             body = _json.dumps({"error": f"no deliverable stored for job {job_id}"}).encode()
             status = 404
         await send({"type": "http.response.start", "status": status,

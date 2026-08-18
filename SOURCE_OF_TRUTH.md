@@ -73,22 +73,27 @@ Order and command names taken from the `/bnbagent-studio` skill and from what th
 | ⏸ | `[storage].kind = "ipfs"` + `STORAGE_API_URL` / `STORAGE_API_KEY` | **deferred** — needs a pinning service; `local` is fine until a buyer fetches |
 | ✅ | Grid-trading strategy — `[strategy]` block + `chain.py` / `grid.py` / `grid_signing.py` / `strategy.py` | built; live on testnet |
 | ✅ | Activate on testnet — seeded USDT, grid armed, first buy executed | 1 open lot at level 4 |
-| ✅ | `bag dev` — local A2A, `negotiate` verified (signature recovers to our wallet) | done; funded path still untested |
+| 🟡 | `bag dev` — local A2A, `negotiate` + funded delivery | mainnet job 56608 reached `SUBMITTED`; fetch URL returned 404 because the SDK writes `erc8183-job-{id}.json` while the route looks for `job-{id}.json` |
 | ✅ | `bag erc8004 register` — writes `[identity]` | mainnet `269233` "BNB Grid Trader (test)", testnet `1838`. Both point at the nip.io card |
 | ✅ | Ship — Docker + nginx on `zd-instance`, mainnet | live at `bnb-grid.172-104-171-139.nip.io`, not trading |
 | ⏸ | Rotate the wallet | **deferred to the real-domain deploy** — this is a test agent on nip.io, mainnet id is named "(test)". Rotate together with the setAgentURI on both ids |
-| ⬜ | Fund mainnet + `GRID_MONITOR=1` | wallet has 0.0023 BNB, 0 USDT |
-| 🚫 | Full funded job loop — createJob → fund → notify → deliver → settle | **blocked on testnet, not by us.** The stack owner de-whitelisted the testnet OptimisticPolicy: `EvaluatorRouter.policyWhitelist(0x4f4678d4…)` is False on testnet, True on mainnet, so `register_job` reverts `PolicyNotWhitelisted()` and every route around it is closed by the kernel (`HookRequired()` / `PolicyNotSet()`). Mainnet works but needs ≥0.1 U (wallet has 0.0224) and has a **7-day** dispute window. See MEMORY.md |
+| 🟡 | Fund mainnet + `GRID_MONITOR=1` | funded for one 0.02 U lifecycle smoke test; monitor remains `GRID_MONITOR=0` and the mainnet job escrow is pending settlement |
+| 🟡 | Full funded job loop — createJob → fund → notify → deliver → settle | mainnet 56608 completed through `SUBMITTED`; settlement verified to `COMPLETED` on a fork after advancing 7 days. The real mainnet job remains `SUBMITTED` until its 7-day window expires. Testnet remains blocked: `PolicyNotWhitelisted()` / `PolicyNotSet()`. See MEMORY.md |
 
 Notes:
 
-- **`[storage].kind = "local"` now DOES deliver — because we serve it.** The
+- **`[storage].kind = "local"` is not yet verified end-to-end.** The
   scaffold's A2A app mounts no job-query route, so the
   `{ERC8183_AGENT_URL}/job/{id}/response` that `submit_result` publishes on-chain
   would 404 (`bag deploy prepare` raises this as W10, and the sibling deployment
   404s on both its ports to this day). `main.py`'s `_serve_deliverables` closes
-  it by serving `$STORAGE_LOCAL_PATH/job-{id}.json`, which is exactly what
-  `LocalStorageProvider` writes. Caveat: this storage dies with the host, and the
+  route now serves BOTH `erc8183-job-{id}.json` (what `submit_result` writes —
+  `job_ops.py` passes that name positionally to `upload()`) and the
+  `job-{id}.json` that `LocalStorageProvider` falls back to when no name is
+  given. **A second, independent cause of the 56608 404:** the deliverable was
+  written by a LOCAL `bag dev` run while the on-chain URL points at the VPS,
+  whose `/data/deliverables/` is empty — so fulfilment and serving must happen
+  on the SAME host, or the file must be copied across. Caveat: this storage dies with the host, and the
   on-chain URL cannot change while a job is unsettled — so IPFS remains the
   durable answer, now an upgrade rather than a blocker.
 - **LLM runs through OpenRouter**, not Pieverse. `bag llm activate` is the Pieverse
