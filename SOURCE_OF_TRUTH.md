@@ -78,7 +78,7 @@ Order and command names taken from the `/bnbagent-studio` skill and from what th
 | ✅ | Ship — Docker + nginx on `zd-instance`, mainnet | live at `bnb-grid.172-104-171-139.nip.io`, not trading |
 | ⏸ | Rotate the wallet | **deferred to the real-domain deploy** — this is a test agent on nip.io, mainnet id is named "(test)". Rotate together with the setAgentURI on both ids |
 | 🟡 | Fund mainnet + `GRID_MONITOR=1` | funded for one 0.02 U lifecycle smoke test; monitor remains `GRID_MONITOR=0` and the mainnet job escrow is pending settlement |
-| 🟡 | Full funded job loop — createJob → fund → notify → deliver → settle | mainnet 56608 completed through `SUBMITTED`; settlement verified to `COMPLETED` on a fork after advancing 7 days. The real mainnet job remains `SUBMITTED` until its 7-day window expires. Testnet remains blocked: `PolicyNotWhitelisted()` / `PolicyNotSet()`. See MEMORY.md |
+| 🟡 | Full funded job loop — createJob → fund → notify → deliver → settle | **Run with SEPARATE wallets: mainnet job 56610, client `0x7545e5c6…` ≠ provider `0xFAf0ff…`, evaluator = router.** negotiate → signed quote anchored in the description → createJob → registerJob → setBudget → fund → notify_funded (accepted) → LLM work → `SUBMITTED` → deliverable fetched 200 from the on-chain URL. Only `settle` is outstanding: settle-able **2026-08-25 11:54 UTC**, 2-day window. Testnet remains blocked: `PolicyNotWhitelisted()` / `PolicyNotSet()`. See MEMORY.md |
 
 Notes:
 
@@ -87,7 +87,10 @@ Notes:
   `{ERC8183_AGENT_URL}/job/{id}/response` that `submit_result` publishes on-chain
   would 404 (`bag deploy prepare` raises this as W10, and the sibling deployment
   404s on both its ports to this day). `main.py`'s `_serve_deliverables` closes
-  route now serves BOTH `erc8183-job-{id}.json` (what `submit_result` writes —
+  **Verified end to end on job 56610**: the seller wrote
+  `/data/deliverables/erc8183-job-56610.json`, published
+  `https://bnb-grid.…/erc8183/job/56610/response` on-chain, and that URL returns
+  200 with the grid plan. The route serves BOTH `erc8183-job-{id}.json` (what `submit_result` writes —
   `job_ops.py` passes that name positionally to `upload()`) and the
   `job-{id}.json` that `LocalStorageProvider` falls back to when no name is
   given. **A second, independent cause of the 56608 404:** the deliverable was

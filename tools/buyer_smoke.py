@@ -1,84 +1,141 @@
-"""Buyer-side harness: drive the full ERC-8183 job loop against our own agent.
+"""Buyer-side harness: drive the ERC-8183 lifecycle against the deployed seller.
 
-    python buyer.py create|status|fetch|complete
+    python tools/buyer_smoke.py negotiate
+    python tools/buyer_smoke.py run          # negotiate -> create -> fund -> notify
+    python tools/buyer_smoke.py status | fetch | settle
 
-The studio's testnet OptimisticPolicy has been DE-WHITELISTED on the
-EvaluatorRouter (`policyWhitelist(0x4f4678d4..) == False`, while mainnet's is
-still True), so `bag erc8183 buy` reverts at register_job with
-PolicyNotWhitelisted(). This harness routes around that by creating the job with
-evaluator = us and hook = 0, which needs no router registration: an unrouted job
-is completed by its evaluator via commerce.complete() instead of router.settle().
+TWO SEPARATE WALLETS. This signs with the BUYER keystore
+(.studio/wallets-buyer); the seller signs with .studio/wallets and its identity
+in studio.toml is never touched. That separation is the point — a single-wallet
+run cannot prove client != provider.
 
-That exercises OUR half of the loop end to end (create -> fund -> notify ->
-LLM work -> submit_result -> deliverable fetch -> payment release) but NOT the
-studio's policy-based settlement, which is untestable on testnet while the
-policy stays de-whitelisted.
+The evaluator is the ROUTER (the SDK's create_job wires it that way), so
+settlement is the OptimisticPolicy's: silence past the dispute window, then a
+permissionless router.settle(). Nothing here can shortcut that.
+
+EXPIRED_AT NEEDS A REAL BUFFER. Mainnet's dispute window is 7 days. A job whose
+expired_at is only minutes past submittedAt + disputeWindow is settle-able for
+only those minutes before claimRefund can take it to EXPIRED instead. Mainnet
+job 56608 shipped with a 29-minute window; this uses DISPUTE_BUFFER_DAYS.
 """
 import json
 import os
 import sys
 import time
+import urllib.request
+import uuid
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-from bnbagent.erc8183 import ERC8183Client
-from bnbagent_studio_core.wallet import get_wallet
-
-NETWORK = os.environ.get("BNB_NETWORK", "bsc-testnet")
-ZERO = "0x0000000000000000000000000000000000000000"
+NETWORK = os.environ.get("BNB_NETWORK", "bsc-mainnet")
+BUYER_KEYSTORE = ".studio/wallets-buyer"
+BUYER = "0x7545e5c647880Bf16558FDfCdA892487DfFFE522"
+SELLER = "0xFAf0ffd121947B9EE3920Fa0CfbF9EEEB0AcBF7f"
+AGENT_URL = os.environ.get("SELLER_URL", "https://bnb-grid.172-104-171-139.nip.io")
 STATE = Path(__file__).parent / "buyer-job.json"
-PRICE_U = 0.1
+TASK = "Compute a 9-level BNB/USDT grid plan for 200 USDT capital"
+DISPUTE_BUFFER_DAYS = 2
+
+
+def buyer_wallet():
+    from bnbagent.wallets import EVMWalletProvider
+    return EVMWalletProvider(
+        password=os.environ["WALLET_PASSWORD"], address=BUYER, wallets_dir=BUYER_KEYSTORE,
+    )
 
 
 def client():
-    """Client that SELF-PAYS gas.
+    from bnbagent.erc8183 import ERC8183Client
+    return ERC8183Client(wallet_provider=buyer_wallet(), network=NETWORK)
 
-    The testnet preset sets use_paymaster=True (MegaFuel). One sponsored write
-    vanished — broadcast returned a hash, then the tx was in neither the mempool
-    nor a block and the nonce never advanced — and the same call mined once
-    sponsorship was off. One sample only (other sponsored writes did mine), so
-    this is a workaround, not a diagnosis. resolve_network() returns a
-    NetworkConfig verbatim, so a copy with use_paymaster=False makes
-    _build_paymaster return None and the wallet pays its own gas.
+
+def _a2a(payload: dict) -> dict:
+    """Send one A2A message/send with the skill envelope as a DataPart.
+
+    The seller has no free-form skill: prose without a DataPart is rejected by
+    design, so the envelope shape matters.
     """
-    import dataclasses
-
-    from bnbagent.config import resolve_network
-
-    w = get_wallet()
-    nc = dataclasses.replace(resolve_network(NETWORK), use_paymaster=False)
-    return ERC8183Client(wallet_provider=w, network=nc), w.address
-
-
-def create():
-    c, me = client()
-    dec = c.token_decimals()
-    amount = int(PRICE_U * 10**dec)
-    expired_at = int(time.time()) + 3 * 24 * 3600
-
-    print(f"buyer/provider/evaluator = {me}  network={NETWORK}")
-    # evaluator=me so completion needs no whitelisted policy. The kernel rejects
-    # a zero hook (HookRequired()), so the router stays as the hook.
-    r = c.commerce.create_job(
-        provider=me,
-        evaluator=me,
-        expired_at=expired_at,
-        description="Compute a 9-level BNB/USDT grid plan for 200 USDT capital",
-        hook=c.router.address,
+    body = {
+        "jsonrpc": "2.0", "id": str(uuid.uuid4()), "method": "message/send",
+        "params": {"message": {
+            "role": "user", "messageId": str(uuid.uuid4()),
+            "parts": [{"kind": "data", "data": payload}],
+        }},
+    }
+    req = urllib.request.Request(
+        AGENT_URL, data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"}, method="POST",
     )
+    with urllib.request.urlopen(req, timeout=180) as r:
+        return json.loads(r.read())
+
+
+def _reply(resp: dict) -> dict:
+    """Pull the seller's data part out of the JSON-RPC envelope."""
+    result = resp.get("result") or {}
+    for part in (result.get("parts") or []):
+        if part.get("kind") == "data":
+            return part.get("data") or {}
+    for msg in (result.get("artifacts") or []):
+        for part in (msg.get("parts") or []):
+            if part.get("kind") == "data":
+                return part.get("data") or {}
+    return resp
+
+
+def negotiate():
+    q = _reply(_a2a({"skill": "negotiate", "task_description": TASK,
+                     "terms": {"deliverables": "grid plan JSON",
+                               "quality_standards": "levels, spacing and per-rung size"}}))
+    print(json.dumps(q, indent=2)[:900])
+    return q
+
+
+def run():
+    c = client()
+    dec = c.token_decimals()
+    q = negotiate()
+    resp = q.get("response") or {}
+    if not resp.get("accepted"):
+        raise SystemExit(f"seller rejected the quote: {resp.get('reason')}")
+    price = int((resp.get("terms") or {}).get("price") or 0)
+    if not price:
+        raise SystemExit(f"no price in quote: {q}")
+    print(f"\nquoted price: {price} ({price/10**dec} U)")
+
+    bal = c.token_balance(BUYER)
+    print(f"buyer U balance: {bal/10**dec}")
+    if bal < price:
+        raise SystemExit("buyer cannot cover the quote — run tools/fund_buyer.py swap")
+
+    dispute = int(c.policy.dispute_window())
+    expired_at = int(time.time()) + dispute + DISPUTE_BUFFER_DAYS * 86400
+    print(f"dispute_window {dispute}s; expired_at = now + window + "
+          f"{DISPUTE_BUFFER_DAYS}d -> settle window is {DISPUTE_BUFFER_DAYS} days wide")
+
+    # The description is NOT free text: verify.py requires a JobDescription
+    # carrying the quote WE just negotiated, and recovers provider_sig from it to
+    # confirm the seller signed these exact terms. A plain string is rejected
+    # permanently with "no signed quote anchored in job description", and the
+    # description cannot be changed after createJob — so build it from the
+    # negotiation result verbatim.
+    from bnbagent.erc8183.negotiation import build_job_description
+
+    description = build_job_description(q)
+    r = c.create_job(provider=SELLER, expired_at=expired_at, description=description)
     job_id = int(r["jobId"])
-    print(f"  createJob   -> job {job_id}")
+    print(f"  createJob  -> job {job_id}  (evaluator = router)")
+    c.register_job(job_id)
+    print("  registerJob-> policy bound")
+    c.set_budget(job_id, price)
+    print(f"  setBudget  -> {price/10**dec} U")
+    c.fund(job_id, price)
+    print(f"  fund       -> escrowed; status {c.get_job_status(job_id).name}")
+    STATE.write_text(json.dumps({"job_id": job_id, "network": NETWORK,
+                                 "expired_at": expired_at, "price": price}))
 
-    c.set_budget(job_id, amount)
-    print(f"  setBudget   -> {PRICE_U} U ({amount})")
-
-    c.fund(job_id, amount)
-    print(f"  fund        -> escrowed {PRICE_U} U")
-
-    job = c.get_job(job_id)
-    print(f"  status      -> {job.status.name}")
-    STATE.write_text(json.dumps({"job_id": job_id, "network": NETWORK}))
+    ack = _reply(_a2a({"skill": "notify_funded", "job_id": job_id}))
+    print(f"  notify     -> {json.dumps(ack)[:300]}")
+    print(f"\njob {job_id} funded. Poll: python tools/buyer_smoke.py status")
     return job_id
 
 
@@ -87,35 +144,37 @@ def _job_id():
 
 
 def status():
-    c, _ = client()
+    c = client()
     jid = _job_id()
-    job = c.get_job(jid)
-    print(f"job {jid}: status={job.status.name} client={job.client}")
-    print(f"  provider={job.provider} evaluator={job.evaluator}")
-    print(f"  budget={job.budget} expired_at={job.expired_at}")
-    return job
+    j = c.get_job(jid)
+    print(f"job {jid}: {j.status.name}")
+    print(f"  client   {j.client}")
+    print(f"  provider {j.provider}")
+    print(f"  evaluator{j.evaluator}")
+    print(f"  separated: {j.client.lower() != j.provider.lower()}")
+    return j
 
 
 def fetch():
-    c, _ = client()
+    c = client()
     jid = _job_id()
     url = c.get_deliverable_url(jid)
-    print(f"deliverable_url: {url}")
+    print("deliverable_url:", url)
+    if url and url.startswith("http"):
+        with urllib.request.urlopen(url, timeout=60) as r:
+            print("fetched:", r.status, r.read()[:400])
     return url
 
 
-def complete():
-    c, me = client()
+def settle():
+    c = client()
     jid = _job_id()
-    bal_before = c.token_balance(me) if hasattr(c, "token_balance") else None
-    r = c.commerce.complete(jid)
-    print(f"complete tx: {r.get('tx_hash') or r.get('transactionHash')}")
-    print(f"status now: {c.get_job(jid).status.name}")
-    if bal_before is not None:
-        print(f"balance {bal_before} -> {c.token_balance(me)}")
+    r = c.settle(jid)
+    print("settle tx:", r.get("tx_hash") or r.get("transactionHash"))
+    print("status now:", c.get_job_status(jid).name)
 
 
 if __name__ == "__main__":
-    {"create": create, "status": status, "fetch": fetch, "complete": complete}[
-        sys.argv[1]
-    ]()
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
+    {"negotiate": negotiate, "run": run, "status": status,
+     "fetch": fetch, "settle": settle}[cmd]()

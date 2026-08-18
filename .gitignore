@@ -38,3 +38,7 @@ dist/
 # Skills installed at workspace root (CC picks them up automatically;
 # they're regeneratable via `bag skills install --scope project`).
 .claude/skills/
+
+# Buyer test keystore — local only, never deployed (rsync would otherwise
+# carry it to the VPS, which has no business holding the buyer's key).
+.studio/wallets-buyer/
