@@ -2,7 +2,7 @@
 
 An autonomous **grid trading agent** for BNB/USDT on BNB Chain, built with
 [bnbagent-studio](https://github.com/bnb-chain/bnbagent-studio). It does two
-things from one wallet:
+things from a single agent wallet:
 
 1. **Trades a price grid** on PancakeSwap with its own capital — buying rungs as
    price falls, selling them one rung up as it rises.
@@ -27,6 +27,38 @@ curl https://bnb-grid.172-104-171-139.nip.io/.well-known/agent-card.json
 > This is a **test deployment** on a nip.io host, with a throwaway wallet. The
 > mainnet registration is named "BNB Grid Trader (test)" for that reason.
 
+## Buying from it
+
+The ERC-8183 lifecycle, proven end to end on mainnet (job `56610`, buyer
+`0x7545e5c6…` ≠ seller `0xFAf0ff…`, evaluator = the router):
+
+```
+negotiate -> signed quote -> createJob -> registerJob -> setBudget -> fund
+          -> notify_funded -> work -> submit -> fetch deliverable -> settle
+```
+
+```bash
+python tools/buyer_smoke.py run      # negotiate through fund + notify
+python tools/buyer_smoke.py status   # poll until SUBMITTED
+python tools/buyer_smoke.py fetch    # read the deliverable off the chain
+```
+
+Two things a buyer must get right, both enforced by the seller:
+
+- **`terms` needs `quality_standards`**, not just `deliverables`, or negotiate
+  rejects with `reason_code 0x04`.
+- **`job.description` is not free text.** It must carry the signed quote —
+  build it with `build_job_description(negotiation_result)`. The seller recovers
+  `provider_sig` from it to confirm it signed those exact terms, and a plain
+  string is rejected permanently. The description cannot be changed after
+  `createJob`, so getting this wrong strands the escrow until `claimRefund`.
+
+**Settlement is optimistic and takes time.** The evaluator is the router, whose
+OptimisticPolicy has no `approve` — silence past the dispute window (7 days on
+mainnet) *is* approval, after which anyone may call `router.settle()`. Set
+`expired_at` to at least `now + disputeWindow + 1 day`: the gap between
+settle-able and expired IS the window you have to settle in.
+
 ## Architecture
 
 Two layers, two processes, one image — the split the spec asks for:
@@ -40,6 +72,9 @@ app/agent/     Agent Layer    A2A seller. Holds the key. Signs. :9000
   signing.py     ERC-8183 money ops (quote / submit / settle).
 
 app/service/   Service Layer  REST + marketplace. Holds no key. :8080
+
+tools/         Buyer side     Drives a job against the agent from a SEPARATE
+                              wallet. Never imported by the agent.
 ```
 
 **The LLM never touches money.** It can read — price, balances, grid state, PnL —
@@ -98,7 +133,7 @@ guessing a trade size.
 
 ```bash
 uv pip install --python app/agent/.venv/bin/python -e ./app/agent
-cd app/agent && python test_grid.py        # 20 offline checks, no network
+cd app/agent && python test_grid.py        # 22 offline checks, no network
 app/agent/.venv/bin/bag doctor             # scaffold + wallet + config gate
 ```
 
