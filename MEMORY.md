@@ -16,6 +16,21 @@ Entry format:
 
 ---
 
+## 2026-08-18 — Why settlement waits, and the one way to make it not wait
+
+**Why:** "if the buyer approves, why wait 7 days?" Verified against the ABIs, the local SDK docs, the EIP text and free `eth_call` probes rather than reasoning from the SDK alone.
+
+**What is actually true:**
+- **There is no on-chain approve.** `OptimisticPolicy` exposes only `dispute()` and `voteReject()`. The SDK docstring and the BNB docs both state it: "silence past the dispute window is implicit approval… there is no `voteApprove` on-chain". `settle --action approve` just calls `router.settle()`, which READS the verdict — it reverts `NotDecided()` until the window elapses. Approval is the absence of a dispute, and absence can only be proven by time.
+- **The window is NOT part of ERC-8183.** The EIP says "no dispute resolution or arbitration" at the kernel, and that the evaluator "MAY be the client… so the client can complete or reject the job without a third party". `complete(jobId, reason, optParams)` is evaluator-only with NO waiting at kernel level. The 7 days come from the v1 deployment pattern where `evaluator = router = OptimisticPolicy`, not from the standard.
+- **The router-hook does NOT gate completion.** Probed `beforeAction(jobId, complete_selector)` from the kernel address on real registered jobs: **ALLOWED**. The verdict gate lives in `router.settle()`, not in the hook. So `evaluator = our EOA` + `hook = router` (policy registered to satisfy the hook) settles the moment the job is SUBMITTED — no window. This is the same-day path on mainnet.
+
+**Two ways the BNB kernel DEVIATES from the EIP** (both verified by eth_call, both the reason testnet cannot be worked around): the EIP calls the hook optional and `address(0)` "fully compliant", but this kernel raises `HookRequired()` for a zero hook — unconditionally, for EOA and router evaluators alike. And it ERC-165-checks the hook: an EOA or a random contract raises `HookMissingInterface()`. The router is the only compliant hook deployed, and it refuses to act on a job with no registered policy (`PolicyNotSet()`), which needs a whitelisted policy, which testnet no longer has. The chain is closed at every link.
+
+**Tradeoff if the EOA-evaluator path is ever used for real buyers:** buyer-as-evaluator means the buyer can also reject and refund AFTER delivery. The SDK flags exactly this as `CLIENT_AS_EVALUATOR`. Fine when we are both sides of a smoke test; wrong for customers — which is what the optimistic policy exists to prevent.
+
+**Revisit when:** running the loop on mainnet (use evaluator = our own address to skip the 7 days), or if a testnet policy is re-whitelisted.
+
 ## 2026-08-18 — The funded job loop is BLOCKED on testnet by an external de-whitelist
 
 **Why:** attempted the full `createJob → fund → notify → deliver → settle` loop on testnet (free, 10 $U held). `bag erc8183 buy` reverted at register with `0xc94463e3` = `PolicyNotWhitelisted()`.
