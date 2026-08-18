@@ -40,7 +40,7 @@ Entry format:
 
 **Two facts that decide the mainnet alternative:** the wallet holds **0.0224 U against a 0.1 U list price**, so it cannot pay itself; and mainnet's OptimisticPolicy `dispute_window` is **7 days** (testnet's is 1), so settlement cannot complete same-day even once funded.
 
-**Testnet gas is unsponsored in practice.** The preset sets `use_paymaster = True` (MegaFuel), and a sponsored write was silently DROPPED — broadcast returned a hash, then the tx appeared in neither mempool nor block and the nonce never advanced. Self-paying works: `dataclasses.replace(resolve_network(net), use_paymaster=False)` makes `_build_paymaster` return None. Suspect the paymaster first when a testnet write vanishes without a revert.
+**One testnet write vanished; cause NOT established.** A `createJob` broadcast returned a hash, then appeared in neither mempool nor block and the nonce never advanced (`TransactionPendingError` after 300s). Disabling the MegaFuel paymaster — `dataclasses.replace(resolve_network(net), use_paymaster=False)`, which makes `_build_paymaster` return None — and retrying the SAME call mined it. That is suggestive but NOT conclusive: jobs 528/529 were created earlier through `bag erc8183 buy` with the paymaster ON and mined fine, so it is one drop against two successes on the same path, and transient testnet congestion explains it equally well. Self-paying is the reliable workaround; do not treat sponsorship as known-broken on the strength of one sample.
 
 **Left behind:** testnet jobs 528/529/530 sit OPEN with no escrow (530 has a budget set but was never funded — balance is still 10.0 U). They expire on their own; rejecting them would hit the same `PolicyNotSet()` hook.
 

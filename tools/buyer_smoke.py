@@ -34,11 +34,13 @@ PRICE_U = 0.1
 def client():
     """Client that SELF-PAYS gas.
 
-    The testnet preset sets use_paymaster=True (MegaFuel). Sponsored writes were
-    silently dropped — broadcast returned a hash, then the tx was in neither the
-    mempool nor a block and the nonce never advanced. resolve_network() returns a
-    NetworkConfig verbatim, so a copy with use_paymaster=False makes _build_paymaster
-    return None and the wallet pays its own gas.
+    The testnet preset sets use_paymaster=True (MegaFuel). One sponsored write
+    vanished — broadcast returned a hash, then the tx was in neither the mempool
+    nor a block and the nonce never advanced — and the same call mined once
+    sponsorship was off. One sample only (other sponsored writes did mine), so
+    this is a workaround, not a diagnosis. resolve_network() returns a
+    NetworkConfig verbatim, so a copy with use_paymaster=False makes
+    _build_paymaster return None and the wallet pays its own gas.
     """
     import dataclasses
 
