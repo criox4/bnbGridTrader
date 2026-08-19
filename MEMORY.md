@@ -16,6 +16,33 @@ Entry format:
 
 ---
 
+## 2026-08-19 — E2E suite found a PnL bug that live trading had hidden
+
+**Why:** "test everything" had to be repeatable and auditable, not a sequence of one-off commands. `tools/e2e_test.py` runs 34 checks (40 with `--live`) across guards, emergency-stop latching, the A2A surface, the REST surface, on-chain job state, and a real mainnet round trip.
+**Approach:** negative checks are first-class — each guard must RAISE to pass, because a guard that never refuses has not been tested — and every check prints what it observed rather than "ok".
+**Rejected:** asserting only happy paths. Both bugs below were found by checks that expected a REFUSAL.
+
+**Bug 1 — `updateGrid` silently zeroed reported profit.** It re-indexes an open lot onto the new rungs and the eventual sell records at the NEW level, but the buy stayed logged at the OLD one. `round_trips()` pairs a sell to a buy at the SAME level, so the pair was unmatchable: `grid_profit`, `completed_grids` and `win_rate` all read 0 while real money had moved. `realised_quote` stayed correct (it is cash-based), which is exactly why live trading never exposed it — the two figures diverge only after an `updateGrid`. `get_marketplace_data` publishes those numbers, so a re-shaped grid would have advertised zero performance. Fixed by re-indexing the lot's open buy in the trade log alongside `filled`; verified on-chain (`grid_profit -0.0019995 == realised_quote`, `completed_grids 1`) and pinned by a regression test.
+
+**Bug 2 — `notify_funded` ACKed jobs that cannot exist.** It answered `accepted` for id 999999999. The SDK's `verify.py` treats a non-FUNDED read as a RACE (`permanent=False`) so the caller re-checks — right for a job that exists, wrong for an id beyond `job_counter()`: it ACKed work it would never do and spawned a background task per unauthenticated request. Fixed in OUR `signing.verify_signed_job`, NOT in `verify.py` — site-packages edits vanish on reinstall. The bound check runs only on the already-failing transient path, so the happy path pays no extra RPC read, and an unreadable counter leaves the SDK's verdict alone. Verified: fake ids reject permanently while real job 56610 still returns retry-later, so the race semantics survive.
+
+**Forcing a `decide()`-driven sell without weakening a guard:** re-shape to `500–600 / 9`. The lot re-indexes by BUY PRICE onto a coarser grid and lands on a rung whose next rung sits below spot, with ~2.3% rungs — above the fee+slippage floor. An earlier attempt used ~0.47% rungs and `validate_grid` refused, correctly.
+
+**Round-trip cost, measured three times:** -0.0019995 USDT on 2.0 = -0.09998%, exactly 2 x 5bps with no price move to earn on. Four mainnet transactions cost 0.00002 BNB (~1.2 cents) of gas.
+
+**BSC needs POA middleware for anything calling `build_transaction()`** — it fetches a block and BSC's 280-byte `extraData` trips web3's validation middleware. The agent's own `_send` never hit this because it builds tx dicts by hand with a legacy `gasPrice`; mixing that with `build_transaction()`'s EIP-1559 fields then fails RLP with `Unknown kwargs: ['gasPrice']`. The RPC override is `STUDIO_BSC_RPC`; a private QuickNode endpoint lives in `.studio/.env.local` because its URL path IS the credential.
+
+## 2026-08-19 — Separated buyer/seller lifecycle proven on mainnet (job 56610)
+
+**Why:** every earlier run had client == provider, which proves no counterparty check.
+**Approach:** imported the buyer key into its OWN keystore dir (`.studio/wallets-buyer`, gitignored) and loaded it with an explicit `EVMWalletProvider`. `studio.toml`'s `[wallet].address` was NOT touched — `get_wallet()` reads it and that identity is bound on-chain to ERC-8004 ids 269233/1838. Buyer funded by swapping 0.002 BNB → 1.204 U. Job 56610: client `0x7545e5c6…` ≠ provider `0xFAf0ff…`, evaluator = router, 0.1 U escrowed, delivered, `SUBMITTED`, deliverable fetched 200 from the on-chain URL.
+**Rejected:** running the seller locally — `submit_result` publishes `{ERC8183_AGENT_URL}/job/{id}/response` ON-CHAIN and it can never change, so fulfilment must happen on the host that serves that URL. That was the second, independent cause of 56608's 404: its deliverable was written on a laptop while the URL pointed at the VPS.
+**Revisit when:** settling 56610 — settle-able 2026-08-25 11:54 UTC, 2-day window.
+
+**Two requirements that cost real money to discover:** `job.description` is NOT free text — `verify.py` parses it as a `JobDescription` and recovers `provider_sig` to confirm the seller signed those exact terms, so build it with `build_job_description(negotiation_result)`; a plain string is rejected permanently and the description cannot be changed after `createJob`. Job **56609 was stranded by this** (0.1 U escrowed, `claimRefund` on 2026-08-27). And `terms` needs `quality_standards`, not just `deliverables`, or negotiate rejects with `reason_code 0x04`.
+
+**Deliverable filenames: both are real.** `submit_result` passes `erc8183-job-{id}.json` POSITIONALLY to `upload()` (`job_ops.py:309`); `LocalStorageProvider`'s no-name fallback is `job-{id}.json`. The route serves both.
+
 ## 2026-08-18 — End-to-end seller lifecycle reached SUBMITTED on mainnet and COMPLETED on a fork
 **Why:** the agent needed a real test of the full seller path, not only quote signing and isolated grid trades.
 **Approach:** ran a temporary local A2A seller against BSC mainnet with a 0.02 U smoke price: negotiate → quote anchoring → create/register/set budget/fund → `notify_funded` → OpenRouter work → signed submit. Mainnet job 56608 reached `SUBMITTED`; a disposable fork of the same state advanced seven days and verified `router.settle` reaches `COMPLETED` without waiting or spending another mainnet transaction.
