@@ -20,6 +20,8 @@ domain needs it, but keep these ops OUT of the LLM tool list.
 """
 from __future__ import annotations
 
+import logging
+
 from bnbagent.erc8183 import NegotiationHandler
 
 from bnbagent_studio_core import config
@@ -27,6 +29,8 @@ from bnbagent_studio_core.erc8183 import submit_workflow
 from bnbagent_studio_core.erc8183.client import get_8183_client
 from bnbagent_studio_core.erc8183.workflows import settle_workflow
 from bnbagent_studio_core.wallet import get_wallet
+
+logger = logging.getLogger("seller-agent.signing")
 
 
 def _erc8183_cfg() -> dict:
@@ -156,6 +160,24 @@ def verify_signed_job(job_id: int) -> tuple[bool, str, bool]:
     from bnbagent_studio_core.erc8183.verify import verify_signed_job as _verify
 
     v = _verify(job_id, expected_signer=get_wallet().address)
+    if not v.ok and not v.permanent:
+        # The SDK marks a non-FUNDED read TRANSIENT because it is normally a
+        # race: the buyer funded a moment ago and our RPC has not caught up, so
+        # the caller should re-check rather than refuse. That is right for a job
+        # that exists. It is wrong for an id beyond the kernel's job counter,
+        # which can never become FUNDED — there, "retry later" means ACKing
+        # "delivery started" for work that will never exist and spawning a
+        # background task for every unauthenticated notify. Escalate only that
+        # case, and only here on the already-failing path, so the happy path
+        # never pays for the extra read.
+        try:
+            counter = int(get_8183_client().commerce.job_counter())
+            if job_id < 1 or job_id > counter:
+                return (False,
+                        f"job {job_id} does not exist (highest job id is {counter})",
+                        True)
+        except Exception as e:  # noqa: BLE001 — counter unreadable ⇒ keep the SDK verdict
+            logger.warning("job-counter bound check failed for %s: %s", job_id, e)
     return v.ok, v.reason, v.permanent
 
 
