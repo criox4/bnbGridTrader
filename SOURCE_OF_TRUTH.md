@@ -20,7 +20,7 @@ It is not a plain AgentCore app — see `AGENTS.md` for the hard invariants.
 | Deploy target (account + region) | `agentcore/aws-targets.json` |
 | Last deployed state | `agentcore/.cli/deployed-state.json` |
 | Agent dependencies | `app/agent/pyproject.toml` |
-| Secrets | `.studio/.env.local` (`WALLET_PASSWORD`, `OPENROUTER_API_KEY`, `SERVICE_API_KEY`), `agentcore/.env.local` — both gitignored, never read into chat |
+| Secrets | `.studio/.env.local` (`WALLET_PASSWORD`, `OPENROUTER_API_KEY`, `SERVICE_API_KEY`, `STUDIO_BSC_RPC` — a private QuickNode endpoint whose URL path IS the credential), `agentcore/.env.local` — both gitignored, never read into chat |
 | Wallet keystore | `.studio/wallets/` — workspace root, **never** under `app/agent/` |
 
 ## Current configuration
@@ -77,7 +77,7 @@ Order and command names taken from the `/bnbagent-studio` skill and from what th
 | ✅ | `bag erc8004 register` — writes `[identity]` | mainnet `269233` "BNB Grid Trader (test)", testnet `1838`. Both point at the nip.io card |
 | ✅ | Ship — Docker + nginx on `zd-instance`, mainnet | live at `bnb-grid.172-104-171-139.nip.io`, not trading |
 | ⏸ | Rotate the wallet | **deferred to the real-domain deploy** — this is a test agent on nip.io, mainnet id is named "(test)". Rotate together with the setAgentURI on both ids |
-| 🟡 | Fund mainnet + `GRID_MONITOR=1` | funded for one 0.02 U lifecycle smoke test; monitor remains `GRID_MONITOR=0` and the mainnet job escrow is pending settlement |
+| 🟡 | Fund mainnet + `GRID_MONITOR=1` | agent wallet funded (4 USDT + 0.0101 BNB) and a **full grid round trip executed on mainnet**: buy 2 USDT at level 4 → `cancel` sold it back → realised -0.0019991 USDT (= the 2×5bps fee, no price move to earn on), `completed_grids: 1`. Monitor still `GRID_MONITOR=0` — no autonomous trading. A `decide()`-driven sell (price crossing a rung) remains unproven |
 | 🟡 | Full funded job loop — createJob → fund → notify → deliver → settle | **Run with SEPARATE wallets: mainnet job 56610, client `0x7545e5c6…` ≠ provider `0xFAf0ff…`, evaluator = router.** negotiate → signed quote anchored in the description → createJob → registerJob → setBudget → fund → notify_funded (accepted) → LLM work → `SUBMITTED` → deliverable fetched 200 from the on-chain URL. Only `settle` is outstanding: settle-able **2026-08-25 11:54 UTC**, 2-day window. Testnet remains blocked: `PolicyNotWhitelisted()` / `PolicyNotSet()`. See MEMORY.md |
 
 Notes:
