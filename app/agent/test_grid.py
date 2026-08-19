@@ -231,6 +231,29 @@ def test_pending_orders_top_lot_has_no_sell_target():
     assert len(top) == 1 and top[0]["side"] == "sell" and top[0]["trigger"] is None, top
 
 
+def test_round_trips_need_the_buy_and_sell_on_the_SAME_level():
+    """The pairing rule that update_grid must preserve.
+
+    A lot re-indexed by updateGrid sells at its NEW level. If the buy stays
+    logged at the old one the pair is unmatchable and grid_profit reads 0 while
+    real money moved — and that figure is published to the marketplace.
+    """
+    mismatched = [
+        {"side": "buy",  "level": 4, "quote_amount": 2.0, "base_amount": 0.00331906},
+        {"side": "sell", "level": 7, "quote_amount": 1.9980005, "base_amount": 0.00331906},
+    ]
+    assert grid.round_trips(mismatched) == [], "levels differ -> no pair"
+    assert grid.realised_pnl(mismatched)["grid_profit"] == 0
+
+    matched = [dict(t) for t in mismatched]
+    matched[1]["level"] = 4
+    r = grid.realised_pnl(matched)
+    assert abs(r["grid_profit"] + 0.0019995) < 1e-9, r["grid_profit"]
+    assert r["completed_grids"] == 1
+    # Cash accounting is level-independent and must agree either way.
+    assert abs(grid.realised_pnl(mismatched)["realised_quote"] - r["realised_quote"]) < 1e-12
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

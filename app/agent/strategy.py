@@ -329,6 +329,16 @@ def update_grid(lower: float | None = None, upper: float | None = None,
         while str(new_idx) in remapped and new_idx + 1 < len(new):
             new_idx += 1
         remapped[str(new_idx)] = amount
+        # Re-index the lot's OPEN BUY in the trade log too. `round_trips` pairs a
+        # sell to a buy at the SAME level, and after this remap the eventual sell
+        # is recorded at new_idx — so leaving the buy at old_idx makes the pair
+        # unmatchable and `grid_profit` / `completed_grids` / `win_rate` silently
+        # read 0 while the money really moved. Those figures are published by
+        # get_marketplace_data, so under-reporting them is not cosmetic.
+        for tr in reversed(state.get("trades") or []):
+            if tr.get("side") == "buy" and int(tr.get("level", -1)) == old_idx:
+                tr["level"] = new_idx
+                break
         if new[new_idx] != bought_at:
             moved.append({"from_price": bought_at, "to_level": new_idx,
                           "to_price": new[new_idx]})
