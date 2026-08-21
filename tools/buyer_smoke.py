@@ -133,8 +133,14 @@ def run():
     STATE.write_text(json.dumps({"job_id": job_id, "network": NETWORK,
                                  "expired_at": expired_at, "price": price}))
 
-    ack = _reply(_a2a({"skill": "notify_funded", "job_id": job_id}))
-    print(f"  notify     -> {json.dumps(ack)[:300]}")
+    if "--no-notify" in sys.argv:
+        # Deliberately silent: proves the Service Layer sweep finds a funded job
+        # that the buyer never announced. Without the sweep this job would sit
+        # FUNDED until its deadline.
+        print("  notify     -> SKIPPED (--no-notify): the sweep must find this one")
+    else:
+        ack = _reply(_a2a({"skill": "notify_funded", "job_id": job_id}))
+        print(f"  notify     -> {json.dumps(ack)[:300]}")
     print(f"\njob {job_id} funded. Poll: python tools/buyer_smoke.py status")
     return job_id
 

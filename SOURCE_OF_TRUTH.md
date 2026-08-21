@@ -132,6 +132,7 @@ and buyers pay $U for status reports and computed grid plans.
 | `app/agent/grid_signing.py` | Chain WRITES — wrap / exact approve / swap. Fixed code, never a tool. |
 | `app/agent/strategy.py` | State, monitor loop, operator CLI, reports. |
 | `app/service/main.py` | Service Layer (spec §2) — REST, marketplace payload, job visibility. Holds no key; owns the monitor. |
+| `app/service/sweep.py` | Funded-job watcher. Scans Commerce read-only for FUNDED jobs assigned to us and PUSHES `notify_funded` to the agent, which holds the key and delivers. `SERVICE_SWEEP=1`, exactly one process. |
 
 Grid shape: `levels` rungs geometrically spaced over ±`range_pct` around the
 **activation** price. Equal ratios mean every rung earns the same percentage;

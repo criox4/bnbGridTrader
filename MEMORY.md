@@ -16,6 +16,15 @@ Entry format:
 
 ---
 
+## 2026-08-21 — Funded-job sweep: the Service Layer watches, the Agent signs
+
+**Why:** the agent was purely push-driven. A buyer who funded on-chain and never called `notify_funded` was served only if some OTHER notify happened to arrive and trigger the agent's opportunistic sweep. With no traffic that job sat FUNDED until its deadline and the buyer reclaimed — escrowed money, work never done, and nothing logging an error because nothing was watching. `seller_core` names the gap itself: "a periodic Lambda poller ... is the v2 robust path". `[payments.erc8183].poll_interval_seconds = 30` existed in config with NOTHING reading it.
+**Approach:** `app/service/sweep.py`. It scans Commerce **read-only** (`ERC8183Client` with no wallet_provider; the provider address comes from studio.toml, not from unlocking a keystore in the keyless layer) via one multicall batch, then PUSHES `notify_funded` to the agent over A2A — the same door a buyer uses. Watcher here, signer there, one implementation of delivery. Opt in with `SERVICE_SWEEP=1`, exactly one process, same reason as the grid monitor.
+**Rejected:** delivering from the service. It would need the key, which is the whole point of the two-layer split. Also rejected re-notifying on every tick: `notify_funded` answers "rejected" only for PERMANENT verdicts, so a rejected job is remembered and never re-pushed — job 56609 (bad description) would otherwise have spawned agent work every 30 seconds forever.
+**Revisit when:** the agent moves to a scale-to-zero runtime — a sweep that wakes it every 30s defeats the point, and the interval should then match the cold-start economics.
+
+**Proven, not assumed:** funded mainnet job **56633** and deliberately sent NO notification (`buyer_smoke.py run --no-notify`). The sweep found it, pushed, the agent accepted, and the job reached `SUBMITTED` in ~35s with the deliverable serving 200. Before this it would have sat FUNDED until expiry.
+
 ## 2026-08-19 — E2E suite found a PnL bug that live trading had hidden
 
 **Why:** "test everything" had to be repeatable and auditable, not a sequence of one-off commands. `tools/e2e_test.py` runs 34 checks (40 with `--live`) across guards, emergency-stop latching, the A2A surface, the REST surface, on-chain job state, and a real mainnet round trip.

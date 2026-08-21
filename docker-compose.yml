@@ -85,6 +85,12 @@ services:
       WALLET_PASSWORD: ${WALLET_PASSWORD:?set WALLET_PASSWORD on the host}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY on the host}
       SERVICE_API_KEY: ${SERVICE_API_KEY:?set SERVICE_API_KEY on the host}
+      # Funded-job watcher: scans Commerce for FUNDED jobs assigned to us and
+      # pushes notify_funded to the AGENT (which holds the key and does the
+      # delivering). Without it, a buyer who funds but never notifies is only
+      # served if some other notify happens to arrive. Exactly one process.
+      SERVICE_SWEEP: ${SERVICE_SWEEP:-0}
+      AGENT_A2A_URL: ${AGENT_A2A_URL:-http://agent:9000/}
       # This container owns the poll. An flock cannot span hosts, so if you ever
       # run a second VPS, exactly one of them sets this.
       SERVICE_RUN_MONITOR: ${GRID_MONITOR:-0}

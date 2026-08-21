@@ -171,7 +171,28 @@ def resume(x_api_key: str | None = Header(default=None)) -> dict:
     return _safe(strategy.resume)
 
 
+@app.get("/sweep")
+def sweep_status(dry_run: bool = True) -> dict:
+    """What the funded-job sweep sees right now. Read-only when dry_run (default).
+
+    Public because it exposes only on-chain facts about jobs assigned to us.
+    Setting dry_run=false pushes notify_funded, so it is gated like a write.
+    """
+    import sweep as _sweep
+
+    return _safe(_sweep.sweep_once, dry_run=dry_run)
+
+
 # --- Monitor --------------------------------------------------------------------
+if (os.environ.get("SERVICE_SWEEP") or "").strip().lower() in ("1", "true", "yes"):
+    # The funded-job watcher. Separate flag from the grid monitor: one polls the
+    # POOL to trade our own capital, the other polls the COMMERCE contract for
+    # work buyers already paid for. A deployment may well want the second
+    # without the first — this one moves no funds of ours.
+    import sweep as _sweep_mod
+
+    _sweep_mod.start()
+
 if (os.environ.get("SERVICE_RUN_MONITOR") or "").strip().lower() in ("1", "true", "yes"):
     for _problem in chain.check_config_consistency():
         log.error("CONFIG: %s", _problem)
